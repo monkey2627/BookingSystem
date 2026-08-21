@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show *)",
+      "Bash(python generate_surveys.py)",
+      "Bash(python *)",
+      "Bash(powershell *)",
+      "Bash(wmic logicaldisk *)",
+      "Bash(mkdir -p /e/Maven/repository)",
+      "Bash(cp -r /c/Users/admin/.m2/repository/. /e/Maven/repository/)",
+      "Bash(sc query *)",
+      "Bash(grep \"userStore$\")",
+      "Bash(xargs grep *)"
+    ]
+  }
+}

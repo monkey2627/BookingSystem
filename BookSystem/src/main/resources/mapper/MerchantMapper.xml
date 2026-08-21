@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.mhp.booksystem.mapper.MerchantMapper">
+
+    <select id="searchPage" resultType="com.mhp.booksystem.entity.Merchant">
+        SELECT * FROM merchant
+        <where>
+            <if test="city != null and city != ''">
+                AND city = #{city}
+            </if>
+            <if test="serviceType != null">
+                AND JSON_CONTAINS(service_types, CAST(#{serviceType} AS JSON))
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND intro LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+    </select>
+
+</mapper>

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.mhp.booksystem.mapper.MessageMapper">
+
+    <!--
+        查询当前用户的全部会话列表：
+          - 找出所有与我聊过的 other_id（我发给对方 OR 对方发给我）
+          - 每个对话只保留最后一条消息（MAX(id) = 最新）
+          - 关联 user 表拿头像和昵称
+          - 子查询统计对方发给我的未读数
+          - 按最后消息时间倒序
+    -->
+    <select id="selectConversations" resultType="com.mhp.booksystem.vo.ConversationVO">
+        SELECT
+            t.other_id                                                  AS userId,
+            u.nickname,
+            u.avatar,
+            m.content                                                   AS lastMessage,
+            m.create_time                                               AS lastTime,
+            (SELECT COUNT(*)
+             FROM message
+             WHERE from_user_id = t.other_id
+               AND to_user_id   = #{userId}
+               AND is_read      = 0)                                    AS unreadCount
+        FROM (
+            SELECT
+                CASE WHEN from_user_id = #{userId} THEN to_user_id
+                     ELSE from_user_id END                              AS other_id,
+                MAX(id)                                                 AS last_id
+            FROM message
+            WHERE from_user_id = #{userId}
+               OR to_user_id   = #{userId}
+            GROUP BY CASE WHEN from_user_id = #{userId} THEN to_user_id
+                          ELSE from_user_id END
+        ) t
+        JOIN message m ON m.id  = t.last_id
+        JOIN `user`  u ON u.id  = t.other_id
+        ORDER BY m.create_time DESC
+    </select>
+
+</mapper>
