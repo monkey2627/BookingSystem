@@ -18,7 +18,7 @@ public class QuestionnaireVO {
     private JsonNode questions;
 
     /** true = 预约时强制填写 */
-    private boolean isRequired;
+    private Boolean isRequired;
 
     private LocalDateTime createTime;
 }

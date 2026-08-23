@@ -1,6 +1,15 @@
 spring:
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 127.0.0.1:8848
+      config:
+        server-addr: 127.0.0.1:8848
+        file-extension: yaml
   application:
-    name: BookSystem
+    name: mhp-app
+  config:
+    import: nacos:mhp-app.yaml
   datasource:
     url: jdbc:mysql://localhost:3306/mhp?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
     username: root
@@ -57,3 +66,5 @@ qiniu:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+server:
+  port: 8081

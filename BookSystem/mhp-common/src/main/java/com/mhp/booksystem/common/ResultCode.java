@@ -19,6 +19,7 @@ public enum ResultCode {
     // ==================== 通用 ====================
     SUCCESS(200, "成功"),
     ERROR(500, "服务器内部错误"),
+    SYSTEM_ERROR(500, "系统繁忙，请稍后重试"),
     UNAUTHORIZED(401, "未登录"),
     FORBIDDEN(403, "无权限"),
     PARAM_ERROR(400, "参数错误"),

@@ -42,17 +42,17 @@ public class Result<T> {
     }
 
     /** 失败，手动指定 code 和 message */
-    public static Result<?> fail(Integer code, String message) {
+    public static <T> Result<T> fail(Integer code, String message) {
         return new Result<>(code, message, null);
     }
 
     /** 失败，使用默认错误码 500，如：throw 到 GlobalExceptionHandler 兜底时 */
-    public static Result<?> fail(String message) {
+    public static <T> Result<T> fail(String message) {
         return fail(ResultCode.ERROR.getCode(), message);
     }
 
     /** 失败，直接传 ResultCode 枚举，最常用：Result.fail(ResultCode.SCHEDULE_FULL) */
-    public static Result<?> fail(ResultCode resultCode) {
+    public static <T> Result<T> fail(ResultCode resultCode) {
         return fail(resultCode.getCode(), resultCode.getMessage());
     }
 }

@@ -211,22 +211,22 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
                 .ge(Booking::getCreateTime, monthStart);
 
         MerchantStatsVO stats = new MerchantStatsVO();
-        stats.setTotalOrders((int) bookingMapper.selectCount(base));
-        stats.setCompletedOrders((int) bookingMapper.selectCount(
+        stats.setTotalOrders(bookingMapper.selectCount(base).intValue());
+        stats.setCompletedOrders(bookingMapper.selectCount(
                 new LambdaQueryWrapper<Booking>()
                         .eq(Booking::getMerchantId, merchant.getId())
                         .ge(Booking::getCreateTime, monthStart)
-                        .eq(Booking::getStatus, 3)));
-        stats.setCancelledOrders((int) bookingMapper.selectCount(
+                        .eq(Booking::getStatus, 3)).intValue());
+        stats.setCancelledOrders(bookingMapper.selectCount(
                 new LambdaQueryWrapper<Booking>()
                         .eq(Booking::getMerchantId, merchant.getId())
                         .ge(Booking::getCreateTime, monthStart)
-                        .eq(Booking::getStatus, 4)));
-        stats.setPendingOrders((int) bookingMapper.selectCount(
+                        .eq(Booking::getStatus, 4)).intValue());
+        stats.setPendingOrders(bookingMapper.selectCount(
                 new LambdaQueryWrapper<Booking>()
                         .eq(Booking::getMerchantId, merchant.getId())
                         .ge(Booking::getCreateTime, monthStart)
-                        .eq(Booking::getStatus, 0)));
+                        .eq(Booking::getStatus, 0)).intValue());
         stats.setAvgScore(merchant.getAvgScore());
         stats.setReviewCount(merchant.getReviewCount());
         return stats;

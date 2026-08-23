@@ -154,9 +154,79 @@ boolean locked = lock.tryLock(3, 30, TimeUnit.SECONDS);
 
 ---
 
-## 当前进度（截至 2026-08-16）
+## 微服务架构（BookSystem/）
 
-所有功能均已实现（11 个后端 Controller、11 个前端页面）。
+### 模块结构
+
+```
+BookSystem/
+├── mhp-common      公共模块（Result、ResultCode、BusinessException、CursorPageVO）
+├── mhp-gateway     API 网关，端口 8000
+└── mhp-app         业务单体（后续拆分为多个微服务），端口 8081
+```
+
+### 请求链路
+
+**开发环境：**
+```
+前端 Vite dev server（5173）
+  → proxy /api/* → Gateway:8000
+    → lb://mhp-app → mhp-app:8081
+```
+
+**生产环境：**
+```
+用户请求
+  → Nginx（443/80）
+      ├── location /          → 直接返回 dist/ 静态文件（index.html / JS / CSS）
+      └── location /api/      → proxy_pass Gateway:8000
+            → lb://mhp-app  → mhp-app:8081（多实例时自动负载均衡）
+```
+
+Nginx 处理前端静态文件和 SSL，不需要经过 Gateway；只有 `/api/` 请求才进入微服务链路。
+
+### Nginx 与 Gateway 的分工
+
+| | Nginx | Spring Cloud Gateway |
+|---|---|---|
+| 角色 | 基础设施层反向代理 | 应用层智能路由 |
+| 路由目标 | 写死 IP:Port | 服务名（`lb://mhp-app`），自动服务发现 |
+| 新增实例 | 需改配置 + reload | Nacos 自动感知，无需改动 |
+| 自定义逻辑 | Lua 脚本 | Java Filter（鉴权、限流、日志） |
+| 擅长 | SSL、静态文件、高吞吐 | 服务路由、业务过滤器 |
+
+### Nacos（localhost:8080 控制台 / 8848 API）
+
+- **服务注册**：mhp-app 启动后自动注册，Gateway 通过 `lb://mhp-app` 解析实例列表
+- **配置中心**：Data ID `mhp-app.yaml`，Group `DEFAULT_GROUP`；`spring.config.import: nacos:mhp-app.yaml` 启动时拉取，`@RefreshScope` 支持热更新
+
+### 开发命令（微服务）
+
+```bash
+# 在 BookSystem/ 目录下构建所有模块
+mvn clean package -DskipTests
+
+# 先启动 Nacos，再按顺序启动：
+java -jar mhp-app/target/mhp-app-1.0.0.jar      # 注册到 Nacos
+java -jar mhp-gateway/target/mhp-gateway-1.0.0.jar  # 从 Nacos 获取路由目标
+```
+
+---
+
+## 当前进度（截至 2026-08-21）
+
+所有业务功能均已实现（11 个后端 Controller、11 个前端页面）。
+
+微服务改造进度：
+
+| 步骤 | 内容 | 状态 |
+|------|------|------|
+| 1 | Maven 多模块拆分 | ✅ |
+| 2 | Nacos 服务注册 | ✅ |
+| 3 | Nacos 配置中心 | ✅ |
+| 4 | Gateway 路由（8000 → mhp-app:8081） | ✅ |
+| 5 | 热更新验证（@RefreshScope） | ⏳ |
+| 6 | 服务拆分 + OpenFeign 跨服务调用 | ⏳ |
 
 **待完成：**
 - 七牛云 CDN 域名（`application.yaml` 中 `domain: cdn.your-domain.com` 为占位符）
