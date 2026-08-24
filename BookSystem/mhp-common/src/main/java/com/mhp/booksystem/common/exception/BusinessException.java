@@ -4,7 +4,7 @@ import com.mhp.booksystem.common.ResultCode;
 import lombok.Getter;
 
 /**
- * 业务异常 — 所有"预期内"的错误都用这个抛出。
+ * 自定义的异常类，用来处理可预见的业务异常 — 所有"预期内"的错误都用这个抛出。
  *
  * 区分"预期内"和"预期外"：
  *   - 预期内（BusinessException）：档期不存在、重复预约、权限不足……
@@ -15,6 +15,10 @@ import lombok.Getter;
  * 使用方式：
  *   throw new BusinessException(ResultCode.BOOKING_NOT_FOUND);
  *   throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "档期日期不能早于今天");
+ *   GlobalExceptionHandler每个微服务各有一份，因为它们是独立的 Spring Boot 应用，需要各自注册自己的全局异常处理器：
+ *   mhp-account/src/main/java/com/mhp/booksystem/common/exception/GlobalExceptionHandler.java
+ *   mhp-booking/src/main/java/com/mhp/booksystem/common/exception/GlobalExceptionHandler.java
+ *   mhp-social/src/main/java/com/mhp/booksystem/common/exception/GlobalExceptionHandler.java
  */
 @Getter
 public class BusinessException extends RuntimeException {

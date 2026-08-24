@@ -69,6 +69,7 @@ public enum ResultCode {
     UPLOAD_FILE_TYPE_ERROR(90001, "仅支持 jpg/png/webp 格式"),
     UPLOAD_FILE_TOO_LARGE(90002, "文件大小不能超过 5MB");
 
+    //枚举类的语法，enum实则是一种类似语法糖的东西，如果想要给美剧类型添加参数，需要声明对应的构造函数
     private final Integer code;
     private final String message;
 

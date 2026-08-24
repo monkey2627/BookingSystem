@@ -28,7 +28,7 @@
 
     <!-- 属性,可以理解为pom中的变量 写在<properties></properties>里面，名字自己随便取，用的时候${}-->
     <properties>
-        <java.version>21</java.version>
+        <java.version>21</java.version> <!--规定用的java jdk 版本要是21 -->
         <spring-cloud.version>2023.0.1</spring-cloud.version>
         <spring-cloud-alibaba.version>2023.0.1.0</spring-cloud-alibaba.version>
         <mybatis-plus.version>3.5.5</mybatis-plus.version>

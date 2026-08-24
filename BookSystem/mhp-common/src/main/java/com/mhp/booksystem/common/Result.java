@@ -1,21 +1,17 @@
 package com.mhp.booksystem.common;
 
-import lombok.Data;
+import lombok.Data;//用来自动生成类所需要的getter，setter等
 
 /**
- * 统一 HTTP 响应体
- *
- * 所有接口都返回此结构，前端只需在 Axios 拦截器里统一判断 code：
- *   code=200  → 成功，取 data
- *   code=401  → 未登录，跳转登录页
- *   其他      → 业务错误，弹 message
- *
- * 泛型 T 是业务数据的类型，查询接口传具体 VO，无数据时传 null。
+ * 统一返回给前端的数据格式，无论前端什么请求，最终后端都会返回给
+ * 前端一个Result类型的数据，前端只需在 Axios 拦截器里统一判断 code
+ * 不同的code约定不同的情况，对应处理即可
+ * 泛型T是业务数据的类型，查询接口传具体 VO，无数据时传 null。
  */
 @Data
 public class Result<T> {
 
-    /** 业务状态码，200=成功，其他见 ResultCode */
+    /** 业务状态码，详细定义见ResultCode */
     private Integer code;
 
     /** 提示信息，成功时为"成功"，失败时为具体错误原因 */
@@ -31,7 +27,9 @@ public class Result<T> {
         this.data = data;
     }
 
-    /**静态方法用来创造一个结果对象 成功并携带数据，如：return Result.ok(merchantVO) */
+    /**用来创造一个携带了返回数据的结果对象
+     * 注意，这里涉及到静态方法的泛型知识，静态方法的T和类上的T毫无关联仅仅是名称一样，类上的T只对实例相关有效
+     * */
     public static <T> Result<T> ok(T data) {
         return new Result<>(ResultCode.SUCCESS.getCode(), ResultCode.SUCCESS.getMessage(), data);
     }
