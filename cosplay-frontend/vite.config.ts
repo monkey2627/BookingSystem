@@ -24,7 +24,7 @@ export default defineConfig({
       // 浏览器看到的是 localhost:5173/api/...，不知道有跨域，绕过同源策略
       // 生产环境由 Nginx 做同样的事（location /api/ → proxy_pass http://localhost:8081）
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:80',
         changeOrigin: true  // 修改请求头中的 Host 为 target，避免后端 vhost 校验失败
       }
     }

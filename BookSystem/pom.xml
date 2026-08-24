@@ -21,7 +21,9 @@
     <modules>
         <module>mhp-common</module>
         <module>mhp-gateway</module>
-        <module>mhp-app</module>
+        <module>mhp-account</module>
+        <module>mhp-booking</module>
+        <module>mhp-social</module>
     </modules>
 
     <!-- 属性,可以理解为pom中的变量 写在<properties></properties>里面，名字自己随便取，用的时候${}-->

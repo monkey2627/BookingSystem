@@ -32,11 +32,6 @@
             <artifactId>spring-cloud-starter-loadbalancer</artifactId>
         </dependency>
 
-        <!-- 公共模块（Result、ResultCode，用于统一错误响应） -->
-        <dependency>
-            <groupId>com.mhp</groupId>
-            <artifactId>mhp-common</artifactId>
-        </dependency>
     </dependencies>
 
     <build>

@@ -32,7 +32,7 @@ export const merchantApi = {
     request.get<any, MerchantVO>('/merchant/my'),
 
   getStats: () =>
-    request.get<any, MerchantStatsVO>('/merchant/stats'),
+    request.get<any, MerchantStatsVO>('/booking/stats/merchant'),
 }
 
 // ── 档期 ──────────────────────────────────────────────────

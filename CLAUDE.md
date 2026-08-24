@@ -160,18 +160,34 @@ boolean locked = lock.tryLock(3, 30, TimeUnit.SECONDS);
 
 ```
 BookSystem/
-├── mhp-common      公共模块（Result、ResultCode、BusinessException、CursorPageVO）
-├── mhp-gateway     API 网关，端口 8000
-└── mhp-app         业务单体（后续拆分为多个微服务），端口 8081
+├── mhp-common      公共模块（Result、ResultCode、BusinessException、CursorPageVO、Feign DTO/Client）
+├── mhp-gateway     API 网关，端口 80
+├── mhp-account     账号服务（User + Merchant），端口 8081
+├── mhp-booking     预约服务（Schedule + Booking + Rush + Questionnaire + XXL-Job），端口 8082
+└── mhp-social      社区服务（Post + Follow + Review + Complaint + Message + WebSocket + 七牛云），端口 8083
 ```
+
+OpenFeign 调用方向（单向无环）：
+- mhp-booking → mhp-account（验证商家身份、获取用户信息）
+- mhp-social → mhp-account（获取用户/商家展示信息）
+- mhp-social → mhp-booking（Review/Complaint 校验预约状态）
+
+MQ 流向：mhp-booking（MQSender）→ RabbitMQ → mhp-social（NotifyConsumer → WebSocket push）
+
+内部接口（不经过 Gateway）：
+- mhp-account: `GET /internal/user/{id}`, `GET /internal/user/batch`, `GET /internal/merchant/{id}`, `GET /internal/merchant/by-user/{userId}`, `GET /internal/merchant/batch`, `PUT /internal/merchant/{id}/score`
+- mhp-booking: `GET /internal/booking/{id}`
 
 ### 请求链路
 
 **开发环境：**
 ```
 前端 Vite dev server（5173）
-  → proxy /api/* → Gateway:8000
-    → lb://mhp-app → mhp-app:8081
+  → proxy /api/* → Gateway:80
+    → /api/user/**, /api/merchant/**     → lb://mhp-account:8081
+    → /api/schedule/**, /api/booking/**, /api/questionnaire/** → lb://mhp-booking:8082
+    → /api/post/**, /api/follow/**, /api/review/**, ...        → lb://mhp-social:8083
+    → /ws/**                             → lb://mhp-social:8083
 ```
 
 **生产环境：**
@@ -179,8 +195,8 @@ BookSystem/
 用户请求
   → Nginx（443/80）
       ├── location /          → 直接返回 dist/ 静态文件（index.html / JS / CSS）
-      └── location /api/      → proxy_pass Gateway:8000
-            → lb://mhp-app  → mhp-app:8081（多实例时自动负载均衡）
+      └── location /api/      → proxy_pass Gateway:80
+            → 按路径分发到对应微服务
 ```
 
 Nginx 处理前端静态文件和 SSL，不需要经过 Gateway；只有 `/api/` 请求才进入微服务链路。
@@ -224,9 +240,9 @@ java -jar mhp-gateway/target/mhp-gateway-1.0.0.jar  # 从 Nacos 获取路由目�
 | 1 | Maven 多模块拆分 | ✅ |
 | 2 | Nacos 服务注册 | ✅ |
 | 3 | Nacos 配置中心 | ✅ |
-| 4 | Gateway 路由（8000 → mhp-app:8081） | ✅ |
+| 4 | Gateway 路由（mhp-app → 3 个微服务） | ✅ |
 | 5 | 热更新验证（@RefreshScope） | ⏳ |
-| 6 | 服务拆分 + OpenFeign 跨服务调用 | ⏳ |
+| 6 | 服务拆分 + OpenFeign 跨服务调用 | ✅ |
 
 **待完成：**
 - 七牛云 CDN 域名（`application.yaml` 中 `domain: cdn.your-domain.com` 为占位符）

@@ -7,14 +7,23 @@ spring:
   cloud:
     nacos:
       discovery:
-        server-addr: localhost:8848   # Nacos 地址，第二步启动后填
+        server-addr: localhost:8848
     gateway:
       discovery:
         locator:
-          enabled: false              # 不自动按服务名生成路由，手动配置更可控
+          enabled: false
       routes:
-        # routes是一个list，代表可以在这里配置很多路由规则
-        - id: mhp-app #访问这个微服务时，全局唯一不重复
-          uri: lb://mhp-app           # lb:// 表示从 Nacos 取地址并负载均衡，lb是loadbalance的缩写，表示请求转给uri这个地址
-          predicates: #什么情况下才转呢？满足predicates的路径的时候
-            - Path=/api/** #/** 表示任意匹配
+        - id: mhp-account
+          uri: lb://mhp-account
+          predicates:
+            - Path=/api/user/**, /api/merchant/**
+
+        - id: mhp-booking
+          uri: lb://mhp-booking
+          predicates:
+            - Path=/api/schedule/**, /api/booking/**, /api/questionnaire/**
+
+        - id: mhp-social
+          uri: lb://mhp-social
+          predicates:
+            - Path=/api/post/**, /api/follow/**, /api/review/**, /api/complaint/**, /api/message/**, /api/upload/**, /ws/**

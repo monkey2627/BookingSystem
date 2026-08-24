@@ -32,3 +32,9 @@ WHERE JSON_SEARCH(m.service_types, 'one', '4') IS NOT NULL
 
 -- 4. 删除 User.role 列（账号统一后不再区分角色）
 ALTER TABLE `user` DROP COLUMN role;
+
+-- 5. Merchant 表新增价格范围和预约须知列
+ALTER TABLE merchant
+  ADD COLUMN price_min  DECIMAL(10, 2) NULL COMMENT '价格下限（元）',
+  ADD COLUMN price_max  DECIMAL(10, 2) NULL COMMENT '价格上限（元）',
+  ADD COLUMN booking_notice VARCHAR(500) NULL COMMENT '预约须知';
