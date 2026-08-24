@@ -5,11 +5,17 @@ import lombok.Getter;
 /**
  * 业务错误码枚举
  *
- * 分段设计，方便定位问题所在模块：
+ * 分段设计，方便通过 code 定位问题所在模块：
  *   2xx      通用（遵循 HTTP 语义）
- *   1xxxx    档期模块
- *   2xxxx    订单模块
- *   3xxxx    用户模块
+ *   1xxxx    档期模块（Schedule/Rush）
+ *   2xxxx    预约模块（Booking）
+ *   3xxxx    用户模块（User）
+ *   4xxxx    商家模块（Merchant）
+ *   5xxxx    评价模块（Review）
+ *   6xxxx    动态模块（Post）
+ *   7xxxx    问卷模块（Questionnaire）
+ *   8xxxx    投诉模块（Complaint）
+ *   9xxxx    文件上传
  *
  * 新增错误码时在对应分段追加，不要修改已有枚举的 code 值（前端可能已硬编码判断）。
  */

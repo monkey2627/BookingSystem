@@ -249,3 +249,89 @@ java -jar mhp-gateway/target/mhp-gateway-1.0.0.jar  # 从 Nacos 获取路由目�
 - Sentinel 控制台限流规则（`@SentinelResource` 注解已加，QPS 阈值待配置）
 - 生产部署（Nginx + SSL certbot + ICP 备案）
 - 管理员后台（投诉处理，未规划）
+
+---
+
+## 代码阅读顺序指南
+
+### 第一层：地基（无依赖，读懂后所有代码都清晰）
+
+**`mhp-common/`** — 先把这里读完
+
+1. `common/Result.java` + `ResultCode.java` — 所有接口的响应格式和错误码分段规则
+2. `common/exception/BusinessException.java` + `GlobalExceptionHandler.java` — 业务异常如何抛出和统一捕获
+3. `vo/CursorPageVO.java` — 游标分页的数据结构（为什么不用 offset）
+4. `dto/feign/` 下四个 DTO — 服务间传递的数据长什么样
+5. `feign/AccountFeignClient.java` + `BookingFeignClient.java` — 哪些跨服务调用、调用方向
+
+---
+
+### 第二层：数据库结构（建立字段印象）
+
+直接看实体类，不用看建表 SQL，注释已说明设计原因：
+
+- `mhp-account`: `User.java` → `Merchant.java`
+- `mhp-booking`: `Schedule.java` → `Booking.java` → `RushRecord.java` → `QuestionnaireTemplate.java`
+- `mhp-social`: `Post.java` → `Follow.java` → `Review.java` → `Message.java` → `Complaint.java`
+
+---
+
+### 第三层：核心业务（按复杂度递增）
+
+**mhp-account** — 最简单，先读
+
+1. `UserServiceImpl` — 注册/登录（MD5 + Sa-Token 写 Redis）
+2. `MerchantServiceImpl` — 重点看 `getDetail()`，三缓防护 + Redisson 双重检查完整实现
+
+**mhp-booking** — 核心模块
+
+1. `ScheduleServiceImpl.create()` / `listByMonth()` — 档期基本流程
+2. `BookingServiceImpl.create()` — Redisson 锁 + 双重检查 + 重复预约校验
+3. `BookingServiceImpl.confirm/complete/cancel()` — 状态流转 + MQ 通知
+4. `ScheduleServiceImpl.rush()` — Lua 脚本原子抢档期，配合 `resources/lua/rush.lua` 一起看
+5. `BookingJobHandler` + `ReminderJobHandler` — XXL-Job 定时任务
+
+**mhp-social** — 依赖前两个服务最多
+
+1. `ReviewServiceImpl.create()` — 跨服务校验（BookingFeign）+ 更新商家评分（AccountFeign）
+2. `MessageServiceImpl` — 发消息 + WebSocket 实时推送
+3. `PostServiceImpl.toggleLike()` — Redis 点赞去重
+4. `MQSender`（booking 侧）+ `NotifyConsumer`（social 侧）— 对照看 MQ 消息流向
+
+---
+
+### 第四层：基础设施（理解"为什么能跑起来"）
+
+- `config/SaTokenConfig.java`（任意一个服务）— 白名单拦截器原理
+- `config/MyMetaObjectHandler.java` — createTime/updateTime 自动填充
+- `websocket/StompAuthChannelInterceptor.java` — WS 握手时如何验 token、为什么在这里而不在 HTTP 拦截器
+- `config/WebSocketConfig.java` — STOMP 端点、消息代理、用户目的地前缀
+- `config/RabbitConfig.java` — 交换机/队列/死信队列绑定关系
+- `mhp-gateway/application.yml` — 路由规则（看完整个请求链路就通了）
+
+---
+
+### 第五层：前端（从外向内）
+
+1. `utils/request.ts` — Axios 封装（token 注入 + 401 跳转 + 响应解包）
+2. `router/index.ts` — 路由懒加载 + 导航守卫
+3. `stores/user.ts` — 登录态持久化（内存 + localStorage 双写）
+4. `api/index.ts` — 所有接口一览（和后端 Controller 路径对照）
+5. `composables/useWebSocket.ts` — STOMP 全局单例 + 订阅 + 未读数响应式
+6. 页面：`LoginView` → `HomeView` → `MerchantDetailView`（最复杂）→ `BookingsView` → `MessageView`
+
+---
+
+### 一条贯穿全栈的主线
+
+跑通这个场景，基本全懂了：
+
+```
+用户登录（UserService + Sa-Token + Redis）
+  → 搜索商家（MerchantMapper XML + JSON_CONTAINS）
+  → 查看主页（getDetail 三缓防护 + Redisson）
+  → 发起预约（BookingService + Redisson 分布式锁）
+  → 商家确认（状态流转 → MQSender → RabbitMQ）
+  → WebSocket 推通知给客人（NotifyConsumer → SimpMessagingTemplate）
+  → 客人评价（ReviewService + BookingFeign 跨服务校验 + 更新商家评分）
+```

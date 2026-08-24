@@ -4,6 +4,17 @@ import org.springframework.amqp.core.*;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * RabbitMQ 拓扑声明（mhp-social 侧） — 与 mhp-booking 的 RabbitConfig 完全相同。
+ *
+ * 为什么两边都要声明？
+ *   消费者服务（social）启动时，若 RabbitMQ 里还没有相应队列/交换机，
+ *   @RabbitListener 会因绑定失败而抛出异常。
+ *   两边都声明，无论哪个服务先启动都能正常运行，
+ *   RabbitMQ 对相同参数的幂等声明不会报错。
+ *
+ * 拓扑见 mhp-booking 的 RabbitConfig 注释。
+ */
 @Configuration
 public class RabbitConfig {
 

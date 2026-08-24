@@ -25,6 +25,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public UserLoginVO register(UserRegisterDTO dto) {
+        // 手机号唯一性校验，先查后插，并发概率极低（无需加锁）
         boolean exists = lambdaQuery()
                 .eq(User::getPhone, dto.getPhone())
                 .exists();
@@ -34,10 +35,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         User user = new User();
         user.setPhone(dto.getPhone());
+        // MD5 不可逆加密，只存摘要，忘记密码只能重置不能找回
         user.setPassword(SecureUtil.md5(dto.getPassword()));
         user.setNickname(dto.getNickname());
         save(user);
 
+        // 注册即登录，省去用户再次输密码
         return buildLoginVO(user);
     }
 
@@ -57,6 +60,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         return buildLoginVO(user);
     }
 
+    /**
+     * 登录/注册成功后统一构建返回值。
+     *
+     * StpUtil.login(id) 会在 Redis 里写入 token→userId 映射（Sa-Token 托管），
+     * getTokenValue() 拿到刚生成的 token 字符串返回给前端。
+     * 前端把 token 存在 localStorage，后续请求通过 Axios 拦截器放入 Header。
+     *
+     * hasMerchantProfile 告诉前端当前用户是否有商家资料，
+     * 前端据此决定是否展示"档期管理"等商家专属菜单，避免额外一次接口查询。
+     */
     private UserLoginVO buildLoginVO(User user) {
         StpUtil.login(user.getId());
 
