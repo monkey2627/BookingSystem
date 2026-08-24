@@ -11,7 +11,20 @@
 
     <artifactId>mhp-common</artifactId>
     <name>mhp-common</name>
-    <description>公共模块：统一响应、错误码、业务异常、游标分页</description>
+    <description>
+        公共库模块 — 纯 Java 库，不是微服务。
+        无启动类、无 @SpringBootApplication，打出的 jar 不能独立运行。
+        作用：被 mhp-account / mhp-booking / mhp-social 作为 Maven 依赖引入，
+        集中存放多个服务共用、但不属于任何单一服务的代码：
+          - Result / ResultCode          统一 HTTP 响应格式和业务错误码
+          - BusinessException            业务异常（预期内错误统一用此类抛出）
+          - CursorPageVO                 游标分页响应体
+          - feign/AccountFeignClient     调用 mhp-account 内部接口的声明
+          - feign/BookingFeignClient     调用 mhp-booking 内部接口的声明
+          - dto/feign/                   Feign 调用时传参/返回的 DTO
+        注意：GlobalExceptionHandler 虽三服务内容相同，但因依赖 Spring MVC 组件扫描
+        无法在纯库中自动装配，故各服务单独维护一份。
+    </description>
 
     <!-- common 是纯 Java 库，不需要打成可执行 jar，不需要 spring-boot-maven-plugin -->
     <dependencies>
