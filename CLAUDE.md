@@ -252,6 +252,49 @@ java -jar mhp-gateway/target/mhp-gateway-1.0.0.jar  # 从 Nacos 获取路由目�
 
 ---
 
+## Maven 多模块与 Java 包机制（常见疑问）
+
+### Java 包名是怎么来的？
+
+包名 = `src/main/java/` 之后的目录路径，把 `/` 换成 `.`。
+
+```
+mhp-common/src/main/java/com/mhp/booksystem/feign/AccountFeignClient.java
+                          ↑ 这段路径
+→ 包名：com.mhp.booksystem.feign
+→ 全限定类名：com.mhp.booksystem.feign.AccountFeignClient
+```
+
+所以 `@EnableFeignClients(basePackages = "com.mhp.booksystem.feign")` 扫描的是这个路径，它能找到 mhp-common 里的接口，因为 mhp-common 已作为 Maven 依赖引入，其类在编译后与当前模块一起出现在 classpath 上。
+
+### 不同模块可以用相同的包名吗？
+
+**可以，Maven 多模块项目里这很常见。**
+
+本项目中 mhp-common、mhp-account、mhp-booking、mhp-social 都用同一个包根 `com.mhp.booksystem`，这完全没有问题。
+
+根本原因：JVM 的 classpath 是**扁平的**。编译/运行时，所有 jar 里的 `.class` 文件被展开放到同一个查找空间，JVM 按全限定类名（包名 + 类名）查找类，不关心这个类来自哪个 jar。所以"不同模块、相同包名"在 JVM 眼里根本不是分离的，它们从一开始就在同一命名空间。
+
+```
+classpath（运行时）：
+  mhp-common.jar  ──┐
+  mhp-account.jar ──┤──▶ JVM 统一查找：com.mhp.booksystem.feign.AccountFeignClient
+  mhp-booking.jar ──┤                  com.mhp.booksystem.service.BookingService
+  ...             ──┘                  ...
+```
+
+### 唯一要避免的：类名冲突
+
+如果两个 jar 里都有 `com.mhp.booksystem.foo.Bar`（包名 + 类名完全相同），JVM 会取 classpath 上**先出现**的那个，另一个永远不会被加载。这是隐蔽 bug 的来源，构建时不会报错，运行时行为不符合预期。**本项目不同模块的类名没有重叠，不存在此风险。**
+
+### JPMS（Java 模块系统）的限制
+
+Java 9 引入的 JPMS（`module-info.java`）明确**禁止** Split Package — 即同一包名的类散落在不同模块里。原因是 JPMS 要求每个包只属于一个模块，以保证强封装边界清晰。
+
+本项目**不使用 JPMS**（没有 `module-info.java`），走的是传统 classpath 模式，所以共享包名完全合规，不受此限制。现阶段大多数 Spring Boot 项目也都不用 JPMS。
+
+---
+
 ## 代码阅读顺序指南
 
 ### 第一层：地基（无依赖，读懂后所有代码都清晰）
