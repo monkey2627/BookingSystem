@@ -36,7 +36,6 @@
             <span class="user-info">
               <el-avatar :size="32" :src="userStore.userInfo?.avatar" icon="UserFilled" />
               <span class="nickname">{{ userStore.userInfo?.nickname }}</span>
-              <el-tag v-if="userStore.isMerchant" size="small" type="warning">卖家</el-tag>
             </span>
             <template #dropdown>
               <el-dropdown-menu>

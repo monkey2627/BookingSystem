@@ -25,7 +25,6 @@ export interface UserInfo {
   id: number
   nickname: string
   avatar: string
-  hasMerchantProfile: boolean
 }
 
 // 服务类型枚举（7 类）

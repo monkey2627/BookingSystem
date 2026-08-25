@@ -11,8 +11,8 @@ import { useUserStore } from '@/stores/user'
  * 鉴权设计：
  *   meta.requireAuth=true 的路由在 beforeEach 守卫里检查登录态。
  *   未登录时重定向到 /login 并带上 redirect 参数，登录成功后可跳回原页面。
- *   不区分"商家路由"和"客人路由"，所有登录用户都能访问所有页面，
- *   页面内部根据 isMerchant 做差异化展示（如 BookingsView 同一组件两种视图）。
+ *   所有登录用户同时具备买卖双方身份，不区分商家/客人路由，所有页面均可访问。
+ *   BookingsView 同一组件通过 route.name 区分"我预定的"和"我卖出的"两种视图。
  */
 const router = createRouter({
   history: createWebHistory(), // HTML5 History 模式，URL 无 # 号，需要服务器配置 fallback

@@ -11,8 +11,8 @@
               text-color="#ff9900" />
             <div class="review-count">{{ merchant.reviewCount }} 条评价</div>
           </div>
-          <!-- 关注按钮（客人可见） -->
-          <el-button v-if="userStore.isLoggedIn && !userStore.isMerchant"
+          <!-- 关注按钮：已登录且不是本页商家本人时可见（自己不能关注自己） -->
+          <el-button v-if="userStore.isLoggedIn && !isMerchantOwner"
             :type="isFollowing ? 'default' : 'primary'"
             :plain="isFollowing"
             size="small"
@@ -298,7 +298,7 @@ const isFollowing = ref(false)
 const followLoading = ref(false)
 
 async function fetchFollowStatus() {
-  if (!userStore.isLoggedIn || userStore.isMerchant) return
+  if (!userStore.isLoggedIn || isMerchantOwner.value) return
   isFollowing.value = await followApi.isFollowing(merchantId)
 }
 

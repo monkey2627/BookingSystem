@@ -67,7 +67,7 @@ npm run build  # 生产构建
 | API 全量封装 | `api/index.ts`（`bookingApi`、`merchantApi`、`scheduleApi` 等 11 个模块） |
 | 类型定义 | `types/index.ts`（`BookingVO`、`BOOKING_STATUS_MAP`、`MerchantVO` 等） |
 | Axios 封装 | `utils/request.ts`（请求拦截加 token Header，响应拦截解包 / 401 跳登录） |
-| Pinia 用户 Store | `stores/user.ts`（`token`、`userInfo`、`isLoggedIn`、`isMerchant`） |
+| Pinia 用户 Store | `stores/user.ts`（`token`、`userInfo`、`isLoggedIn`；闲鱼模式，无 isMerchant 区分） |
 | 路由 + 守卫 | `router/index.ts`（`requireAuth` + `role` meta 鉴权） |
 | WebSocket 客户端 | `composables/useWebSocket.ts`（STOMP 全局单例，`unreadCount` 响应式未读数） |
 | 公共头部 | `components/AppHeader.vue` |
@@ -292,6 +292,129 @@ classpath（运行时）：
 Java 9 引入的 JPMS（`module-info.java`）明确**禁止** Split Package — 即同一包名的类散落在不同模块里。原因是 JPMS 要求每个包只属于一个模块，以保证强封装边界清晰。
 
 本项目**不使用 JPMS**（没有 `module-info.java`），走的是传统 classpath 模式，所以共享包名完全合规，不受此限制。现阶段大多数 Spring Boot 项目也都不用 JPMS。
+
+---
+
+## Spring Boot 启动与请求完整生命周期
+
+### 一、自动配置原理（Auto-configuration）
+
+Spring Boot 的核心魔法：**只需引入依赖，框架自动帮你配好相关 Bean，不需要手写 XML 或 @Bean 方法。**
+
+实现机制：
+1. `@SpringBootApplication` 内含 `@EnableAutoConfiguration`。
+2. 启动时扫描 classpath 上所有 jar 里的 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`（Spring Boot 3.x；旧版用 `spring.factories`）。
+3. 该文件列出数百个自动配置类（如 `RedisAutoConfiguration`、`RabbitAutoConfiguration`）。
+4. 每个自动配置类头上挂 `@ConditionalOn...` 注解，按条件决定是否生效：
+   - `@ConditionalOnClass(RedisTemplate.class)` — classpath 有这个类才生效（即引入了 redis starter）
+   - `@ConditionalOnMissingBean(RedisTemplate.class)` — 你没有自己定义才生效（尊重用户配置优先）
+   - `@ConditionalOnProperty("spring.redis.host")` — 配置文件有这个 key 才生效
+
+**示例**：引入 `spring-boot-starter-data-redis` → classpath 出现 `RedisTemplate` → `RedisAutoConfiguration` 条件满足 → 自动创建 `RedisTemplate` Bean → 你可以直接 `@Autowired RedisTemplate`，无需任何配置代码。
+
+---
+
+### 二、启动阶段：哪些组件被扫描和注册
+
+`@SpringBootApplication` = `@Configuration` + `@ComponentScan` + `@EnableAutoConfiguration`
+
+`@ComponentScan` 扫描**启动类所在包及其所有子包**，识别以下注解并注册为 Bean：
+
+| 注解 | 用途 | Spring 如何使用它 |
+|------|------|------------------|
+| `@Configuration` | 配置类 | 调用其中所有 `@Bean` 方法；若实现 `WebMvcConfigurer`，调用其钩子方法组装 MVC 配置 |
+| `@Component` / `@Service` / `@Repository` | 普通 Bean / 服务层 / 数据层 | 注册为 Bean，供构造器注入 / `@Autowired` 使用 |
+| `@Controller` / `@RestController` | 处理 HTTP 请求 | 注册到 DispatcherServlet 的路径→方法映射表 |
+| `@RestControllerAdvice` | 全局异常处理 | `ExceptionHandlerExceptionResolver` 扫描后建立"异常类型→处理方法"映射表 |
+| `@Aspect` | AOP 切面 | Spring AOP 为目标类创建代理，在切入点前后插入增强逻辑 |
+
+`WebMvcConfigurer` 实现类（如 `SaTokenConfig`）被扫描为 Bean 后，Spring 在初始化 MVC 时依次回调其钩子方法：
+- `addInterceptors(registry)` — 注册拦截器（本项目：注册 SaInterceptor 做登录校验）
+- `addCorsMappings(registry)` — 配置跨域
+- `addResourceHandlers(registry)` — 静态资源映射
+- ……等约 20 个扩展点
+
+> **为什么是 "扫描到就自动生效"？** 因为 Spring 在初始化时会遍历所有 WebMvcConfigurer Bean，调用它们的钩子方法。你只需实现接口 + 加 `@Configuration`，框架自动"来问你要配置"，不需要你主动触发。
+
+---
+
+### 三、一次请求从到达到返回的完整流程
+
+以"发起预约"（`POST /api/booking`，需要登录）为例：
+
+```
+[浏览器] POST /api/booking  Header: token=xxx  Body: JSON
+
+    ↓
+[Tomcat 线程池] 分配一条线程（线程生命周期 = 本次请求全程）
+
+    ↓
+[DispatcherServlet] Spring MVC 的总前端控制器，所有 HTTP 请求的唯一入口
+
+    ↓ ── 拦截器链 preHandle 阶段 ───────────────────────────────────────────────
+[SaInterceptor.preHandle()]
+  1. 从 Header 取 token 字符串
+  2. 用 token 查 Redis（token→userId 记录）
+       ├─ 不存在 / 已过期 → 抛 NotLoginException → 跳到"异常路径"
+       └─ 存在且有效     → 将 userId 写入当前线程的 ThreadLocal
+  3. 白名单路径（/login /register /internal/**）→ 跳过第2步，直接放行
+
+    ↓ ── Handler 映射 ──────────────────────────────────────────────────────────
+根据 URL + HTTP Method 在映射表里找到目标 Controller 方法
+（映射表在启动时由 @ComponentScan 扫描 @RestController 建立）
+
+    ↓ ── 参数绑定 + Bean Validation ────────────────────────────────────────────
+Spring 将请求 Body（JSON）反序列化为 BookingCreateDTO
+若 Controller 参数标了 @Valid，触发 Hibernate Validator 校验 DTO 上的所有注解：
+  ├─ 校验通过 → 进入 Controller 方法体
+  └─ 校验失败 → 抛 MethodArgumentNotValidException → 跳到"异常路径"（不进方法体）
+
+    ↓ ── Controller 方法体 ─────────────────────────────────────────────────────
+BookingController.create(dto):
+  调用 BookingService.create(dto)
+  Service 内 StpUtil.getLoginIdAsLong() 从 ThreadLocal 读 userId（O(1)，无 Redis 查询）
+  ├─ 正常完成 → 返回 Result.ok(data)
+  └─ 业务异常 → throw new BusinessException(ResultCode.BOOKING_DUPLICATE)
+
+    ↓ ─────────── 正常路径 ──────────────  异常路径 ──────────────────────────────
+                                         ↓
+                          [异常向上冒泡至 DispatcherServlet 的 try-catch]
+                          BusinessException / MethodArgumentNotValidException
+                          / NotLoginException / 其他 RuntimeException
+                                         ↓
+                          [ExceptionHandlerExceptionResolver]
+                          查"异常类型→处理方法"映射表
+                          → 找到 GlobalExceptionHandler 中对应的 @ExceptionHandler 方法
+                          → 调用该方法，得到 Result.error(...) 对象
+                                         ↓
+[返回值序列化] ←─────────────────────────┘
+  @ResponseBody 将 Result 对象序列化为 JSON，写入 HTTP 响应体
+
+    ↓ ── 拦截器链 afterCompletion 阶段 ────────────────────────────────────────
+Sa-Token 清除当前线程的 ThreadLocal（无论正常还是异常都会执行）
+防止线程归还到池后，数据残留污染下一个请求
+
+    ↓
+[Tomcat] 线程归还到池，等待下一个请求
+
+    ↓
+[浏览器] 收到 HTTP 响应
+```
+
+---
+
+### 四、关键概念对照表
+
+| 概念 | 发生时机 | 作用 |
+|------|---------|------|
+| `@Configuration` + `WebMvcConfigurer` | 启动期 | Spring 回调 `addInterceptors()` 等方法，注册拦截器和 MVC 扩展配置 |
+| `@RestControllerAdvice` | 启动期扫描，请求期使用 | 全局异常兜底，统一错误响应格式 |
+| `SaInterceptor.preHandle()` | 请求到达，进 Controller 前 | 验证 token，将 userId 写入 ThreadLocal |
+| `@Valid` + Hibernate Validator | 进 Controller 前（参数绑定后） | 校验 DTO 字段，失败直接返回 400，不进方法体 |
+| `StpUtil.getLoginIdAsLong()` | Controller / Service 中 | 从 ThreadLocal 读当前用户 id，O(1) 无 IO |
+| `BusinessException` | Service 中 `throw` | 携带 ResultCode，被 GlobalExceptionHandler 捕获转为统一错误响应 |
+| `afterCompletion()` | Controller 返回后 | ThreadLocal 清理，防内存泄漏和数据污染 |
+| Tomcat 线程 | 贯穿整个请求 | 1请求=1线程，ThreadLocal 与之同生共死；同一用户的不同请求使用不同线程 |
 
 ---
 

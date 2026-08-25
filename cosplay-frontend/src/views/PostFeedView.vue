@@ -2,8 +2,7 @@
   <div class="page-container">
     <div class="feed-header">
       <h2 class="page-title">动态广场</h2>
-      <!-- 商家可发布动态 -->
-      <el-button v-if="userStore.isMerchant" type="primary" @click="publishDialogVisible = true">
+      <el-button v-if="userStore.isLoggedIn" type="primary" @click="publishDialogVisible = true">
         发布动态
       </el-button>
     </div>
@@ -11,7 +10,7 @@
     <!-- 筛选 Tab -->
     <el-tabs v-model="feedTab" @tab-change="handleTabChange">
       <el-tab-pane label="全部动态" name="all" />
-      <el-tab-pane v-if="userStore.isLoggedIn && !userStore.isMerchant" label="我的关注" name="follows" />
+      <el-tab-pane v-if="userStore.isLoggedIn" label="我的关注" name="follows" />
     </el-tabs>
 
     <div class="post-list" v-loading="loading && posts.length === 0">
@@ -43,8 +42,8 @@
             {{ post.likeCount }}
           </el-button>
           <el-button text @click="goMerchant(post.merchantId)">查看主页</el-button>
-          <!-- 商家自己的动态可以删除 -->
-          <el-button v-if="userStore.isMerchant" text type="danger" @click="handleDelete(post.id)">
+          <!-- 已登录用户可尝试删除，后端校验是否是自己发布的 -->
+          <el-button v-if="userStore.isLoggedIn" text type="danger" @click="handleDelete(post.id)">
             删除
           </el-button>
         </div>

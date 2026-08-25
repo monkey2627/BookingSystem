@@ -36,11 +36,7 @@
 
     <!-- ── 空状态 ── -->
     <div v-if="bookings.length === 0 && !loading" class="empty-wrap">
-      <el-empty :description="isMerchantView && !hasMerchantProfile ? '你还没有开通卖家服务' : '暂无订单'" />
-      <el-button v-if="isMerchantView && !hasMerchantProfile" type="primary"
-        @click="$router.push('/merchant/profile')">
-        去开通卖家服务
-      </el-button>
+      <el-empty description="暂无订单" />
     </div>
 
     <!-- ── 订单列表 ── -->
@@ -158,7 +154,6 @@ const route = useRoute()
 const userStore = useUserStore()
 
 const isMerchantView = computed(() => route.name === 'receivedBookings')
-const hasMerchantProfile = computed(() => userStore.isMerchant)
 
 // ── 筛选状态 ──────────────────────────────────────────────
 const selectedType = ref<number | null>(null)
