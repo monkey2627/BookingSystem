@@ -23,11 +23,14 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHits;
-import org.springframework.data.elasticsearch.core.query.Order;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import co.elastic.clients.elasticsearch._types.query_dsl.FieldValueFactorModifier;
+import co.elastic.clients.elasticsearch._types.query_dsl.FunctionBoostMode;
+import co.elastic.clients.elasticsearch._types.query_dsl.FunctionScore;
+import co.elastic.clients.elasticsearch._types.query_dsl.FunctionScoreMode;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 
 import java.util.ArrayList;
@@ -199,75 +202,114 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
     }
 
     /**
-     * 商家搜索 — 全走 ES，不再走 MySQL searchPage。
+     * 商家搜索 — 全走 ES，查询结构：function_score 包裹 bool query。
      *
-     * ── 查询结构（bool query）──────────────────────────────────────────────
+     * ── 整体评分公式 ──────────────────────────────────────────────────────
      *
-     *   must（影响评分）：
-     *     - keyword 存在 → multi_match on [nickname^2, intro]
-     *       nickname^2：搜到昵称匹配的商家权重是简介匹配的 2 倍，排在前面
-     *       IK 分词搜索：搜"妆娘"能匹配"专业妆娘接单"，比 LIKE '%妆娘%' 更精准
-     *     - keyword 不存在 → match_all（匹配所有文档，评分均为 1.0）
+     *   最终得分 = bool_score × (avgScore × 1.2 + log(1 + reviewCount) × 0.5)
+     *              ↑ 相关度分                 ↑ 业务因子（两个 function 相加后 × 相关度）
      *
-     *   filter（不影响评分，性能更好，会被 ES 缓存）：
-     *     - city → term 精确匹配（keyword 类型字段不分词）
-     *     - serviceType → term 匹配数组中的某个值（integer 类型）
+     *   boost_mode=multiply：把 bool query 的相关度 _score 与业务因子相乘，
+     *   保证关键词越相关 × 评分越高 ＝ 最终排越前，而不是单纯比业务指标。
      *
-     *   sort：
-     *     - 有 keyword → 默认按 _score desc（相关度排序）
-     *     - 无 keyword → 按 avgScore desc（评分高的排在前面，类似"首页推荐"效果）
+     * ── 字段搜索范围 ──────────────────────────────────────────────────────
+     *
+     *   nickname^2        — 昵称，IK 中文分词，权重 2（匹配昵称比匹配简介得分高）
+     *   intro             — 简介，IK 中文分词，权重 1
+     *   nickname.pinyin   — 昵称拼音子字段（@InnerField suffix=pinyin），支持：
+     *                         "zhuangniang" → 分割 → ["zhuang","niang"] → 命中"妆娘"
+     *                         "lty"（首字母缩写）→ 命中"洛天依"
+     *   intro.pinyin      — 简介拼音子字段（同上）
+     *
+     * ── 为什么不再用 sort(avgScore) ───────────────────────────────────────
+     *   之前无关键词时用 sort 按 avgScore 排序，有关键词时用 _score 排序，
+     *   两套策略切换不平滑。改用 function_score 后：
+     *   无关键词（match_all，_score=1.0）→ 最终得分 = 1 × 业务因子，等价于按业务排序
+     *   有关键词（_score 有实际值）      → 最终得分 = 相关度 × 业务因子，两者共同决定排名
+     *   逻辑统一，不再需要分支切换。
      *
      * ── 为什么 ES 搜索比 MySQL LIKE 更好 ─────────────────────────────────
-     *   MySQL：intro LIKE '%妆娘%' → 全表扫描，不走索引，大数据量慢
-     *          且只搜 intro 字段，搜不到 nickname
-     *   ES：   倒排索引 → O(1) 查词频，O(log N) 查文档；
-     *          搜 nickname + intro 两个字段；
-     *          IK 分词后"妆娘服务"和"专业妆娘"都能匹配到"妆娘"
+     *   MySQL LIKE '%妆娘%' → 全表扫描，不走索引；只搜单字段；不支持拼音
+     *   ES 倒排索引 → O(log N)；多字段；IK 分词；拼音支持；相关度评分
      */
     @Override
     public Page<MerchantVO> search(String city, Integer serviceType, String keyword, int page, int size) {
-        // ── 构建 bool query ────────────────────────────────────────────────
-        // NativeQuery 是 Spring Data ES 的原生查询包装类，支持直接写 ES DSL
-        NativeQuery.Builder queryBuilder = NativeQuery.builder();
 
-        // must 子句：决定哪些文档参与结果，影响 _score
+        // ── Step 1：构建 bool 内层查询（决定哪些文档匹配） ─────────────────
+        Query boolQuery;
         if (StringUtils.hasText(keyword)) {
-            // multi_match：在多个字段同时搜索，取最高分
-            // "nickname^2" 表示 nickname 字段的评分 × 2，昵称命中优先于简介命中
-            queryBuilder.withQuery(q -> q.bool(b -> b
+            // multi_match：同时搜索中文字段 + 拼音子字段
+            // "nickname.pinyin" 是 @InnerField(suffix="pinyin") 自动生成的子字段名
+            // 搜"zhuangniang"会命中"妆娘"；搜"妆娘"也能通过 nickname 主字段命中
+            boolQuery = Query.of(q -> q.bool(b -> b
                     .must(m -> m.multiMatch(mm -> mm
-                            .fields("nickname^2", "intro")
+                            .fields("nickname^2", "intro",
+                                    "nickname.pinyin", "intro.pinyin")
                             .query(keyword)
                     ))
                     .filter(buildFilters(city, serviceType))
             ));
-            // 有关键词：按相关度排序（ES 默认行为，不需要显式指定）
         } else {
-            // 无关键词：全部文档，按评分降序
-            queryBuilder.withQuery(q -> q.bool(b -> b
+            // match_all：所有文档都参与，_score 统一为 1.0
+            // 排名完全由 function_score 的业务因子决定（下面 Step 2）
+            boolQuery = Query.of(q -> q.bool(b -> b
                     .must(m -> m.matchAll(ma -> ma))
                     .filter(buildFilters(city, serviceType))
             ));
-            // 无关键词时按 avgScore 降序排列（评分高的优先展示）
-            queryBuilder.withSort(Order.desc("avgScore"));
         }
 
-        // 分页：ES 页码从 0 开始，前端页码从 1 开始，需要 -1
-        queryBuilder.withPageable(PageRequest.of(page - 1, size));
+        // ── Step 2：function_score 叠加业务评分 ──────────────────────────
+        //
+        // field_value_factor 参数说明：
+        //   field    — 取文档中哪个字段的值
+        //   factor   — 乘以该值的系数（控制这个因子的影响权重）
+        //   modifier — 对字段值做变换：
+        //              none   → 直接用字段值（avgScore 直接用，线性影响）
+        //              log1p  → log(1 + 值)（reviewCount 用对数，防止百万接单量独大）
+        //   missing  — 字段为 null 时的默认值：
+        //              avgScore 无评价 → 默认 3.0（中等），避免新商家被过度压制
+        //              reviewCount 无记录 → 0，完全不加分
+        //
+        // 示例得分（无关键词，match_all._score=1.0）：
+        //   商家A avgScore=4.8 reviewCount=50  → 1.0 × (5.76 + log(51)×0.5) ≈ 7.73
+        //   商家B avgScore=4.0 reviewCount=200 → 1.0 × (4.80 + log(201)×0.5) ≈ 7.45
+        //   商家C avgScore=5.0 reviewCount=0   → 1.0 × (6.00 + 0)           = 6.00
+        //   商家D 新商家无评价                  → 1.0 × (3.60 + 0)           = 3.60
+        Query finalQuery = Query.of(q -> q.functionScore(fs -> fs
+                .query(boolQuery)
+                .functions(
+                        // 因子 1：avgScore 线性加权
+                        FunctionScore.of(fn -> fn.fieldValueFactor(fvf -> fvf
+                                .field("avgScore")
+                                .factor(1.2d)
+                                .modifier(FieldValueFactorModifier.None)
+                                .missing(3.0d)
+                        )),
+                        // 因子 2：reviewCount 对数加权（接单量越多但边际递减）
+                        FunctionScore.of(fn -> fn.fieldValueFactor(fvf -> fvf
+                                .field("reviewCount")
+                                .factor(0.5d)
+                                .modifier(FieldValueFactorModifier.Log1p)
+                                .missing(0.0d)
+                        ))
+                )
+                .scoreMode(FunctionScoreMode.Sum)       // 两个因子分数相加
+                .boostMode(FunctionBoostMode.Multiply)  // 因子总分 × bool query 相关度
+        ));
 
-        // ── 执行查询 ────────────────────────────────────────────────────────
-        // SearchHits<MerchantDoc>：包含 totalHits（总匹配数）和命中列表
+        // ── Step 3：执行查询并分页 ────────────────────────────────────────
+        // 不需要 withSort：function_score 的评分即是排名信号
         SearchHits<MerchantDoc> hits = elasticsearchOperations.search(
-                queryBuilder.build(), MerchantDoc.class);
+                NativeQuery.builder()
+                        .withQuery(finalQuery)
+                        .withPageable(PageRequest.of(page - 1, size))
+                        .build(),
+                MerchantDoc.class);
 
-        // ── 将 ES 文档转换为 MerchantVO ─────────────────────────────────────
-        // nickname/avatar 已存在 ES doc 中（Canal 同步过来），不需要再查 User 表
-        // 这解决了 MySQL 方案中搜索结果需要 N+1 查询 user 表的问题
         List<MerchantVO> voList = hits.stream()
                 .map(hit -> docToVO(hit.getContent()))
                 .collect(Collectors.toList());
 
-        // 手动构建 MyBatis-Plus Page 对象，填入分页元信息
         Page<MerchantVO> result = new Page<>(page, size, hits.getTotalHits());
         result.setRecords(voList);
         return result;

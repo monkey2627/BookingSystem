@@ -191,6 +191,40 @@ INSERT IGNORE INTO ik_custom_word (word, type, category, source, remark) VALUES
 ('1:1还原',  1, 'slang', 'manual', '高度还原角色，服务卖点词'),
 ('高还原',   1, 'slang', 'manual', '高还原度，常见商家描述词');
 
+-- 地标 / 公园（热门外拍取景地，IK 会把"陶然亭"拆成"陶然"+"亭"）
+INSERT IGNORE INTO ik_custom_word (word, type, category, source, remark) VALUES
+-- 北京
+('陶然亭',     1, 'manual', 'manual', '北京热门外拍公园，IK 拆分导致搜不到'),
+('紫竹院',     1, 'manual', 'manual', '北京热门外拍公园'),
+('颐和园',     1, 'manual', 'manual', '北京古典园林，汉服/古风外拍热门'),
+('北海公园',   1, 'manual', 'manual', '北京，白塔景区'),
+('圆明园',     1, 'manual', 'manual', '北京，废墟风格外拍'),
+('奥林匹克公园', 1, 'manual', 'manual', '北京，现代建筑外拍'),
+('朝阳公园',   1, 'manual', 'manual', '北京，商业区附近'),
+('什刹海',     1, 'manual', 'manual', '北京，胡同风格外拍'),
+('国家植物园', 1, 'manual', 'manual', '北京，季节性外拍热门'),
+-- 上海
+('世纪公园',   1, 'manual', 'manual', '上海，大面积草坪外拍'),
+('迪士尼',     1, 'manual', 'manual', '上海迪士尼乐园，角色扮演热门地'),
+('豫园',       1, 'manual', 'manual', '上海传统园林，古风外拍'),
+('人民广场',   1, 'manual', 'manual', '上海地标'),
+-- 成都 / 其他城市
+('宽窄巷子',   1, 'manual', 'manual', '成都，古风外拍热门'),
+('天府广场',   1, 'manual', 'manual', '成都地标'),
+('西湖',       1, 'manual', 'manual', '杭州，汉服外拍圣地'),
+('白云山',     1, 'manual', 'manual', '广州，自然风景外拍'),
+('长隆',       1, 'manual', 'manual', '广州长隆主题公园');
+
+-- 展馆 / 活动场地（IK 会把"国家会议中心"分割）
+INSERT IGNORE INTO ik_custom_word (word, type, category, source, remark) VALUES
+('国家会议中心', 1, 'event', 'manual', '北京，ChinaJoy/漫博常用场馆'),
+('首都体育馆',   1, 'event', 'manual', '北京，大型动漫展场馆'),
+('国家体育馆',   1, 'event', 'manual', '北京，鸟巢附近，大型活动场馆'),
+('上海世博展览馆', 1, 'event', 'manual', '上海，BiliBili World 等展会场馆'),
+('广州国际会展中心', 1, 'event', 'manual', '广州，动漫节场馆'),
+('成都世纪城',   1, 'event', 'manual', '成都国际会展中心别称'),
+('北京国际展览中心', 1, 'event', 'manual', '北京，展会场馆');
+
 -- ──────────────────────────────────────────────────────────
 -- 初始停止词（type=2）— Cosplay 语境无意义词
 -- 补充 IK 默认停止词表未涵盖的行业停止词
