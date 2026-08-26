@@ -1,6 +1,6 @@
 # Nacos + OpenFeign
 
-> Nacos 用于作为注册中心和配置中心。
+> Nacos 用于作为微服务的注册中心和配置中心。
 
 ---
 
@@ -8,7 +8,7 @@
 
 ### 快速接入
 
-Nacos 3.0 强制要求用 MySQL 作为数据库（不再内置），并要求开启鉴权。
+Nacos 3.0 强制要求用 MySQL 作为数据库，并要求开启鉴权。
 
 ```yaml
 # application.yaml（各微服务）
@@ -19,7 +19,7 @@ spring:
         server-addr: 127.0.0.1:8848  # Nacos 地址
 ```
 
-引入依赖后，微服务启动时自动注册到 Nacos，**不需要任何额外代码**。
+引入依赖后，微服务启动就自动注册到Nacos。
 
 ### @EnableDiscoveryClient
 
@@ -33,7 +33,7 @@ public class AccountApplication { ... }
 
 > Spring Cloud Commons 规范：无论用 Nacos、Eureka 还是 Consul，此注解都适用。
 
-### DiscoveryClient 底层原理（了解即可，实际用 Feign）
+### DiscoveryClient 底层原理（了解即可，实际用 Feign封装好的api）
 
 ```java
 // 底层手动写法，用于理解原理
