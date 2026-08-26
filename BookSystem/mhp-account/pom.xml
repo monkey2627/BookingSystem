@@ -81,6 +81,29 @@
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
 
+        <!-- Elasticsearch（Spring Data ES 5.2，支持 ES 8.x，版本由 Spring Boot 3.2 管理） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+        </dependency>
+
+        <!-- Canal CDC 客户端（监听 MySQL binlog → 同步商家数据到 ES） -->
+        <dependency>
+            <groupId>com.alibaba.otter</groupId>
+            <artifactId>canal.client</artifactId>
+            <!-- 排除 Canal 自带的 logback，避免与 Spring Boot 日志冲突 -->
+            <exclusions>
+                <exclusion>
+                    <groupId>ch.qos.logback</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba.otter</groupId>
+            <artifactId>canal.protocol</artifactId>
+        </dependency>
+
         <!-- 配置提示 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -4,22 +4,33 @@ import cn.dev33.satoken.stp.StpUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.mhp.booksystem.canal.CanalSyncService;
 import com.mhp.booksystem.common.ResultCode;
 import com.mhp.booksystem.common.exception.BusinessException;
+import com.mhp.booksystem.document.MerchantDoc;
 import com.mhp.booksystem.dto.MerchantUpdateDTO;
 import com.mhp.booksystem.entity.Merchant;
 import com.mhp.booksystem.entity.User;
 import com.mhp.booksystem.mapper.MerchantMapper;
 import com.mhp.booksystem.mapper.UserMapper;
+import com.mhp.booksystem.repository.MerchantEsRepository;
 import com.mhp.booksystem.service.MerchantService;
 import com.mhp.booksystem.vo.MerchantVO;
 import lombok.RequiredArgsConstructor;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.elasticsearch.client.elc.NativeQuery;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.SearchHits;
+import org.springframework.data.elasticsearch.core.query.Order;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
+
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -57,10 +68,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> implements MerchantService {
 
-    // 以下三个字段由 @RequiredArgsConstructor 生成的构造方法注入，无需 @Autowired
-    private final UserMapper userMapper;           // 查 User 表（商家的昵称/头像存在 user 表，不在 merchant 表）
-    private final StringRedisTemplate stringRedisTemplate; // Redis 字符串操作（存/取序列化后的 JSON）
-    private final RedissonClient redissonClient;   // 分布式锁客户端，用于防缓存击穿
+    // 以下字段由 @RequiredArgsConstructor 生成的构造方法注入，无需 @Autowired
+    private final UserMapper userMapper;                    // 查 User 表（商家的昵称/头像存在 user 表，不在 merchant 表）
+    private final StringRedisTemplate stringRedisTemplate;  // Redis 字符串操作（存/取序列化后的 JSON）
+    private final RedissonClient redissonClient;            // 分布式锁客户端，用于防缓存击穿
+    private final ElasticsearchOperations elasticsearchOperations; // ES 高级查询（NativeQuery + bool query）
+    private final MerchantEsRepository merchantEsRepository;       // ES 基础 CRUD（save/delete/saveAll）
+    private final CanalSyncService canalSyncService;               // 复用 toDoc() 转换逻辑（全量导入时使用）
 
     // 把 Redis key 的前缀集中定义为常量，散落在代码各处的魔法字符串难以维护
     private static final String CACHE_KEY_PREFIX = "merchant:info:";  // 缓存 key：merchant:info:{merchantId}
@@ -184,39 +198,131 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
         }
     }
 
+    /**
+     * 商家搜索 — 全走 ES，不再走 MySQL searchPage。
+     *
+     * ── 查询结构（bool query）──────────────────────────────────────────────
+     *
+     *   must（影响评分）：
+     *     - keyword 存在 → multi_match on [nickname^2, intro]
+     *       nickname^2：搜到昵称匹配的商家权重是简介匹配的 2 倍，排在前面
+     *       IK 分词搜索：搜"妆娘"能匹配"专业妆娘接单"，比 LIKE '%妆娘%' 更精准
+     *     - keyword 不存在 → match_all（匹配所有文档，评分均为 1.0）
+     *
+     *   filter（不影响评分，性能更好，会被 ES 缓存）：
+     *     - city → term 精确匹配（keyword 类型字段不分词）
+     *     - serviceType → term 匹配数组中的某个值（integer 类型）
+     *
+     *   sort：
+     *     - 有 keyword → 默认按 _score desc（相关度排序）
+     *     - 无 keyword → 按 avgScore desc（评分高的排在前面，类似"首页推荐"效果）
+     *
+     * ── 为什么 ES 搜索比 MySQL LIKE 更好 ─────────────────────────────────
+     *   MySQL：intro LIKE '%妆娘%' → 全表扫描，不走索引，大数据量慢
+     *          且只搜 intro 字段，搜不到 nickname
+     *   ES：   倒排索引 → O(1) 查词频，O(log N) 查文档；
+     *          搜 nickname + intro 两个字段；
+     *          IK 分词后"妆娘服务"和"专业妆娘"都能匹配到"妆娘"
+     */
     @Override
     public Page<MerchantVO> search(String city, Integer serviceType, String keyword, int page, int size) {
-        // MyBatis-Plus 分页对象，持有 current/size/total/records 四个字段
-        Page<Merchant> merchantPage = new Page<>(page, size);
+        // ── 构建 bool query ────────────────────────────────────────────────
+        // NativeQuery 是 Spring Data ES 的原生查询包装类，支持直接写 ES DSL
+        NativeQuery.Builder queryBuilder = NativeQuery.builder();
 
-        // baseMapper 是父类 ServiceImpl 注入的 MerchantMapper 实例，类型已确定为 MerchantMapper，
-        // 所以可以直接调用 XML 里定义的自定义方法 searchPage()（使用 JSON_CONTAINS 搜索 JSON 数组字段）
-        baseMapper.searchPage(merchantPage, city, serviceType, keyword);
-
-        List<Merchant> records = merchantPage.getRecords();
-        if (records.isEmpty()) {
-            // 提前返回，避免后续无意义的批量查询
-            return new Page<>(page, size, 0);
+        // must 子句：决定哪些文档参与结果，影响 _score
+        if (StringUtils.hasText(keyword)) {
+            // multi_match：在多个字段同时搜索，取最高分
+            // "nickname^2" 表示 nickname 字段的评分 × 2，昵称命中优先于简介命中
+            queryBuilder.withQuery(q -> q.bool(b -> b
+                    .must(m -> m.multiMatch(mm -> mm
+                            .fields("nickname^2", "intro")
+                            .query(keyword)
+                    ))
+                    .filter(buildFilters(city, serviceType))
+            ));
+            // 有关键词：按相关度排序（ES 默认行为，不需要显式指定）
+        } else {
+            // 无关键词：全部文档，按评分降序
+            queryBuilder.withQuery(q -> q.bool(b -> b
+                    .must(m -> m.matchAll(ma -> ma))
+                    .filter(buildFilters(city, serviceType))
+            ));
+            // 无关键词时按 avgScore 降序排列（评分高的优先展示）
+            queryBuilder.withSort(Order.desc("avgScore"));
         }
 
-        // ── 解决 N+1 查询问题 ──────────────────────────────────────────────────────
-        // 问题：循环里每个商家都单独 selectById(userId)，100 个商家就发 100 条 SQL。
-        // 解法：先收集所有 userId，一次 selectBatchIds() 批量查（1 条 IN 语句），
-        //       结果转成 Map<userId, User> 方便按 id 取值，整体只多 1 条 SQL。
-        List<Long> userIds = records.stream().map(Merchant::getUserId).collect(Collectors.toList());
+        // 分页：ES 页码从 0 开始，前端页码从 1 开始，需要 -1
+        queryBuilder.withPageable(PageRequest.of(page - 1, size));
+
+        // ── 执行查询 ────────────────────────────────────────────────────────
+        // SearchHits<MerchantDoc>：包含 totalHits（总匹配数）和命中列表
+        SearchHits<MerchantDoc> hits = elasticsearchOperations.search(
+                queryBuilder.build(), MerchantDoc.class);
+
+        // ── 将 ES 文档转换为 MerchantVO ─────────────────────────────────────
+        // nickname/avatar 已存在 ES doc 中（Canal 同步过来），不需要再查 User 表
+        // 这解决了 MySQL 方案中搜索结果需要 N+1 查询 user 表的问题
+        List<MerchantVO> voList = hits.stream()
+                .map(hit -> docToVO(hit.getContent()))
+                .collect(Collectors.toList());
+
+        // 手动构建 MyBatis-Plus Page 对象，填入分页元信息
+        Page<MerchantVO> result = new Page<>(page, size, hits.getTotalHits());
+        result.setRecords(voList);
+        return result;
+    }
+
+    /** 构建城市 + 服务类型 filter 列表（为空则返回空列表，bool query 的 filter 接受空列表） */
+    private List<Query> buildFilters(String city, Integer serviceType) {
+        List<Query> filters = new ArrayList<>();
+        if (StringUtils.hasText(city)) {
+            // term query：精确匹配 keyword 字段，不分词
+            filters.add(Query.of(q -> q.term(t -> t.field("city").value(city))));
+        }
+        if (serviceType != null) {
+            // serviceTypes 是 integer 数组，term query 匹配"数组中包含该值"
+            filters.add(Query.of(q -> q.term(t -> t.field("serviceTypes").value(serviceType))));
+        }
+        return filters;
+    }
+
+    /**
+     * 全量初始化：将 MySQL 中所有商家数据批量写入 ES。
+     * 只需在首次部署 ES 或 ES 数据丢失时调用一次，
+     * 之后由 Canal 负责增量同步，无需再调用此方法。
+     */
+    public void initEsData() {
+        List<Merchant> merchants = list();
+        if (merchants.isEmpty()) return;
+
+        List<Long> userIds = merchants.stream().map(Merchant::getUserId).collect(Collectors.toList());
         Map<Long, User> userMap = userMapper.selectBatchIds(userIds).stream()
                 .collect(Collectors.toMap(User::getId, u -> u));
 
-        // 每个 Merchant 从 userMap 里按 userId 取对应 User，合并转成 VO
-        List<MerchantVO> voList = records.stream()
-                .map(m -> toVO(m, userMap.get(m.getUserId())))
+        List<MerchantDoc> docs = merchants.stream()
+                .map(m -> canalSyncService.toDoc(m, userMap.get(m.getUserId())))
                 .collect(Collectors.toList());
 
-        // MyBatis-Plus 的 Page 不支持直接泛型转换，需要新建一个 Page<MerchantVO>，
-        // 手动把分页元信息（当前页/每页大小/总数）和新的 records 填进去
-        Page<MerchantVO> result = new Page<>(merchantPage.getCurrent(), merchantPage.getSize(), merchantPage.getTotal());
-        result.setRecords(voList);
-        return result;
+        // saveAll 底层走 ES bulk API，一次请求写入所有文档，比逐条 save 快很多
+        merchantEsRepository.saveAll(docs);
+    }
+
+    /** ES MerchantDoc → MerchantVO（nickname/avatar 直接来自 ES，无需查 User 表） */
+    private MerchantVO docToVO(MerchantDoc doc) {
+        MerchantVO vo = new MerchantVO();
+        vo.setId(doc.getId());
+        vo.setUserId(doc.getUserId());
+        vo.setNickname(doc.getNickname());
+        vo.setAvatar(doc.getAvatar());
+        vo.setServiceTypes(doc.getServiceTypes() != null ? doc.getServiceTypes() : Collections.emptyList());
+        vo.setCity(doc.getCity());
+        vo.setIntro(doc.getIntro());
+        vo.setAvgScore(doc.getAvgScore() != null ? java.math.BigDecimal.valueOf(doc.getAvgScore()) : null);
+        vo.setReviewCount(doc.getReviewCount());
+        vo.setPriceMin(doc.getPriceMin() != null ? java.math.BigDecimal.valueOf(doc.getPriceMin()) : null);
+        vo.setPriceMax(doc.getPriceMax() != null ? java.math.BigDecimal.valueOf(doc.getPriceMax()) : null);
+        return vo;
     }
 
     @Override

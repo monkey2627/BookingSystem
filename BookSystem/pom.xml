@@ -38,6 +38,7 @@
         <xxl-job.version>2.4.0</xxl-job.version>
         <qiniu.version>7.14.0</qiniu.version>
         <springdoc.version>2.3.0</springdoc.version>
+        <canal.version>1.1.7</canal.version>
     </properties>
 
     <!-- 统一管理版本，子模块按需引入，无需写 version
@@ -116,6 +117,18 @@
                 <groupId>com.mhp</groupId>
                 <artifactId>mhp-common</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+
+            <!-- Canal CDC 客户端（监听 MySQL binlog 同步 ES） -->
+            <dependency>
+                <groupId>com.alibaba.otter</groupId>
+                <artifactId>canal.client</artifactId>
+                <version>${canal.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.otter</groupId>
+                <artifactId>canal.protocol</artifactId>
+                <version>${canal.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

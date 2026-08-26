@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE properties SYSTEM "http://java.sun.com/dtd/properties.dtd">
+<!--
+  IK 分词器远程词库配置
+  =====================
+
+  ── 热更新原理 ──────────────────────────────────────────────────────────────
+  IK 启动时加载此配置文件，获取远程词库 URL。
+  之后每隔 60 秒（IK 内置间隔，不可配置）向以下 URL 发一次 HEAD 请求，
+  对比 Last-Modified 响应头：
+    ┌─ 未变化 → 跳过，不重载
+    └─ 已变化 → 发 GET 请求拉取最新词表，热重载词库（不重启 ES）
+
+  ── URL 说明 ────────────────────────────────────────────────────────────────
+  host.docker.internal：Docker Desktop（Windows/macOS）提供的特殊域名，
+  在容器内部指向宿主机（即运行 mhp-account 的主机）。
+  mhp-account 服务在宿主机 8081 端口提供 /internal/ik/* 接口。
+
+  ── Linux 服务器部署注意 ────────────────────────────────────────────────────
+  Linux 上 host.docker.internal 默认不可用，需在 docker-compose.yml 中为
+  ES 服务添加 extra_hosts：
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  或直接填写宿主机的内网 IP 地址。
+-->
+<properties>
+    <comment>IK Analyzer 远程词库 — 数据源：ik_custom_word 表</comment>
+
+    <!--
+      远程扩展词库：让 IK 认识 Cosplay 领域的新词
+      （角色名、展会名、行业术语等）
+      响应格式：text/plain，每行一个词
+      Last-Modified 响应头 = 表中扩展词最大 update_time
+    -->
+    <entry key="remote_ext_dict">
+        http://host.docker.internal:8081/internal/ik/ext-words
+    </entry>
+
+    <!--
+      远程停止词库：让 IK 过滤圈内口头语和无意义词
+      （"求求"、"大佬"、"谢谢" 等搜索时无价值的词）
+    -->
+    <entry key="remote_ext_stopwords">
+        http://host.docker.internal:8081/internal/ik/stop-words
+    </entry>
+
+    <!-- 本地扩展词库文件（相对于 IK config 目录），此处留空，统一走远程 -->
+    <entry key="ext_dict"></entry>
+
+    <!-- 本地停止词库文件，同上留空 -->
+    <entry key="ext_stopwords"></entry>
+</properties>

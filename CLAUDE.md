@@ -15,7 +15,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 开发命令
 
 ```bash
-# 中间件（MySQL 3306 / Redis 6379 / RabbitMQ 5672+15672 / XXL-Job 8080）
+# 中间件（MySQL 3306 / Redis 6379 / RabbitMQ 5672+15672 / Nacos 8848 / XXL-Job 8088 / ES 9200 / Kibana 5601 / Canal 11111）
+# 首次运行需先构建含 IK 分词器的 ES 镜像（约 3~5 分钟）：
+docker compose build elasticsearch
 docker compose up -d
 
 # 后端（BookSystem/ 目录下）
@@ -104,9 +106,23 @@ npm run build  # 生产构建
 - 参数：`lastId`（上一页最后一条 id，首次传 null）
 - 返回：`CursorPageVO<T>` = `{ list, hasMore, nextCursor }`
 
-### 商家搜索
+### 商家搜索（Elasticsearch）
 
-`MerchantMapper.xml` 使用 `JSON_CONTAINS(service_types, CAST(#{serviceType} AS JSON))` 搜索 JSON 数组字段，无需 Elasticsearch。
+搜索全走 ES，不走 MySQL：
+- `keyword` 做 `multi_match` 搜索 `nickname^2`（权重×2）和 `intro`，IK 分词，比 MySQL LIKE 更精准且能搜到昵称
+- `city` 做 `term` filter（精确匹配 keyword 字段）
+- `serviceType` 做 `term` filter（integer 数组，匹配包含某个值）
+- 有 keyword → 按相关度 `_score` 降序；无 keyword → 按 `avgScore` 降序
+
+数据同步：**Canal CDC**
+- MySQL binlog → Canal server（docker）→ `CanalSyncService`（mhp-account 内置客户端）→ ES
+- 监听 `merchant` 和 `user` 两张表（user 改昵称时同步更新 ES doc 的 nickname/avatar）
+- 全量初始化：`POST /internal/merchant/es/init`（首次部署调用一次）
+
+ES 相关文件：
+- `document/MerchantDoc.java` — ES 文档映射（@Document, IK analyzer）
+- `repository/MerchantEsRepository.java` — ElasticsearchRepository 接口
+- `canal/CanalSyncService.java` — Canal 客户端，ApplicationRunner 启动后台线程
 
 ---
 

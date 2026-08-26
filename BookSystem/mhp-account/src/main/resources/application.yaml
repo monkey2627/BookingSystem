@@ -19,6 +19,9 @@ spring:
     redis:
       host: localhost
       port: 6379
+  elasticsearch:
+    # ES 8.x 单节点，安全认证已在 docker-compose 中关闭（xpack.security.enabled=false）
+    uris: http://localhost:9200
 
 mybatis-plus:
   configuration:
@@ -43,3 +46,10 @@ springdoc:
 
 server:
   port: 8081
+
+# Canal CDC 客户端配置
+# Canal server 在 docker-compose 中以 canal/canal-server:v1.1.7 运行
+# destination 与 Canal server 的 canal.destinations 环境变量保持一致
+canal:
+  server: localhost:11111
+  destination: example

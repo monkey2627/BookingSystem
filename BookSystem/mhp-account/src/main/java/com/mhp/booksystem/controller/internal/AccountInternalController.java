@@ -66,6 +66,19 @@ public class AccountInternalController {
         return Result.ok();
     }
 
+    /**
+     * ES 全量初始化接口 — 将 MySQL merchant 表所有数据批量写入 ES。
+     * 只在首次部署 ES 或 ES 数据丢失后调用一次，之后由 Canal CDC 增量同步。
+     *
+     * 调用方式：POST http://localhost:8081/internal/merchant/es/init
+     * （内部接口，不经过 Gateway，不需要 token）
+     */
+    @PostMapping("/merchant/es/init")
+    public Result<Void> initEsData() {
+        merchantService.initEsData();
+        return Result.ok();
+    }
+
     private UserDTO toUserDTO(User user) {
         UserDTO dto = new UserDTO();
         dto.setId(user.getId());
