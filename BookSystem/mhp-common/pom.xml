@@ -11,7 +11,7 @@
 
     <artifactId>mhp-common</artifactId>
     <name>mhp-common</name>
-    <description>
+    <description> <!--用来写模块描述的 -->
         公共库模块 — 纯 Java 库，不是微服务。
         无启动类、无 @SpringBootApplication，打出的 jar 不能独立运行。
         作用：被 mhp-account / mhp-booking / mhp-social 作为 Maven 依赖引入，
