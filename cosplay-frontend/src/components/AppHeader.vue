@@ -18,6 +18,7 @@
           <router-link to="/schedule/manage">档期管理</router-link>
           <router-link to="/dashboard">数据看板</router-link>
           <router-link to="/questionnaire/manage">问卷管理</router-link>
+          <router-link to="/ai">AI助手</router-link>
         </template>
       </nav>
 

@@ -302,16 +302,92 @@ public class DynamicRouteConfig {
 
 ## 八、Gateway + Sentinel 限流
 
+### 三种限流方案对比
+
+Gateway 层面有两种限流方式，加上微服务内部 Sentinel，共三种：
+
+| | Gateway 自带 RequestRateLimiter | Sentinel @ Gateway（本项目用） | Sentinel @ 微服务内部 |
+|---|---|---|---|
+| 限流位置 | Gateway JVM | Gateway JVM | 各微服务 JVM |
+| 算法 | 令牌桶（Redis） | 滑动窗口 | 滑动窗口 |
+| 规则修改 | 改 YAML 重启 | 控制台热改，无需重启 | 控制台热改，无需重启 |
+| 监控面板 | ❌ | ✅ Sentinel Dashboard | ✅ Sentinel Dashboard |
+| 能熔断吗 | ❌ | ❌（只限流） | ✅（支持熔断降级） |
+| 保护内部 Feign 调用 | ❌ | ❌ | ✅ |
+| 粒度 | 按路由/IP | 按路由/API 分组 | 按接口/方法/参数 |
+
+**为什么两层都要配？**
+
+Gateway 限流是粗粒度入口防护，但它有盲区：微服务之间的 Feign 内部调用不经过 Gateway，Gateway 的限流对这部分完全无效。只有微服务内部的 Sentinel 才能保护这条路径：
+
+```
+外部请求 → Gateway 限流 → mhp-booking
+                               ↓ Feign 内部直调（不过 Gateway）
+                          mhp-account（Gateway 限流管不到这里）
+```
+
+### Sentinel 嵌入 Gateway 的底层原理
+
+**Sentinel 不是独立软件，是嵌入 JVM 的库。** 向 `mhp-gateway/pom.xml` 加依赖后，Sentinel SDK 就跑在 Gateway 的同一个 JVM 进程里：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.cloud</groupId>
+    <artifactId>spring-cloud-alibaba-sentinel-gateway</artifactId>
+</dependency>
+```
+
+```
+mhp-gateway 进程（JVM）
+├── Spring Cloud Gateway 核心（路由、过滤器链、Netty 转发）
+└── Sentinel SDK（同一个 JVM，通过依赖引入）
+      ├── SentinelGatewayFilter（自动注册为 GlobalFilter）
+      ├── 内存中的规则表（FlowRule：路由 id → QPS 阈值）
+      └── 内存中的统计数据（每个路由的 QPS、RT）
+             ↕ TCP 心跳（端口 8719）
+Sentinel Dashboard（独立进程，localhost:8080）
+  → 接收 Gateway 上报的监控数据 → 显示图表
+  → 管理员配置规则 → 推送到 Gateway 内存的 FlowRule 表
+```
+
+**Dashboard 挂掉不影响限流**，规则已经在 Gateway 内存里了。但 Gateway 重启后规则丢失，生产环境需持久化到 Nacos（见 sentinel.md 第十节）。
+
+### 一次被限流请求的完整链路
+
+```
+客户端请求 GET /api/merchant/search
+       ↓
+Netty 接收 TCP 连接（Gateway 监听 80 端口）
+       ↓
+DispatcherHandler（WebFlux 的请求派发器）
+       ↓
+RoutePredicateHandlerMapping → 匹配到 mhp-account 路由
+       ↓
+FilteringWebHandler 构建过滤器链（按 @Order 执行）：
+  ┌─────────────────────────────────────────────────┐
+  │ SentinelGatewayFilter（Order 最小，最先执行）   │
+  │   资源名 = 路由 id = "mhp-account"              │
+  │   查内存 FlowRule → 当前 QPS 是否超阈值？       │
+  │   ├── 未超 → 继续往下                           │
+  │   └── 已超 → 直接返回 429，后续 filter 不执行   │
+  ├─────────────────────────────────────────────────┤
+  │ AuthGlobalFilter（鉴权）                         │
+  ├─────────────────────────────────────────────────┤
+  │ NettyRoutingFilter（实际转发到 mhp-account）     │
+  └─────────────────────────────────────────────────┘
+```
+
+429 响应内容来自 `sentinel.scg.fallback` 配置：
+
 ```yaml
-# application.yaml（mhp-gateway）
 spring:
   cloud:
     sentinel:
       transport:
-        dashboard: localhost:8080  # Sentinel 控制台地址
+        dashboard: localhost:8080
       scg:
         fallback:
-          mode: response           # 限流时返回 JSON 而不是 redirect
+          mode: response           # 直接返回 JSON，不做重定向
           response-status: 429
           response-body: '{"code":429,"message":"请求过于频繁，请稍后重试"}'
 ```
@@ -338,6 +414,69 @@ Gateway 路由配置：predicates: [Path=/api/user/**]，无 StripPrefix
 
 Gateway 自动支持 WebSocket 升级请求透传，只需在路由中匹配 `/ws/**`，无需额外配置。WebSocket 握手时的 HTTP Upgrade 请求会正常转发，之后的 WebSocket 帧也会透传。
 
-**Q：为什么 Gateway 用 WebFlux 而不是 Spring MVC？**
+**Q：Nginx 和 Gateway 的 Netty 是什么关系？**
 
-网关是所有流量的入口，需要处理大量并发连接。WebFlux（Reactor + Netty）使用非阻塞 IO，一个线程可以处理多个连接，比 Servlet 模型（一个请求占一个线程）吞吐量高很多。
+两者串联，不是替代关系：
+
+```
+# 生产环境
+客户端 → Nginx:443（SSL 终止）
+              ├── location /      → 直接返回 dist/ 静态文件（不进 Java）
+              └── location /api/  → proxy_pass → Gateway:80
+                                          ↓
+                                     Netty 接收 TCP 连接
+
+# 开发环境
+浏览器 → Vite dev server:5173（proxy 配置）→ Gateway:80 → Netty 接收
+```
+
+Nginx 是操作系统层的反向代理，负责 SSL、静态文件、把 `/api/` 请求转给 Gateway。到了 Gateway 这里，接收 TCP 连接的是 **Netty**（Gateway 进程自己的网络层）。"Netty 监听 80 端口"说的就是 Gateway 进程本身，Nginx 在这之前已经不在链路里了。
+
+**Q：为什么 Gateway 用 WebFlux + Netty，微服务用 Spring MVC + Tomcat？**
+
+Spring MVC（Tomcat）的线程模型是一个请求占一个线程，等待下游响应期间线程阻塞：
+
+```
+同时 1000 个请求 → 需要 1000 个线程 → Gateway 作为入口扛不住
+```
+
+WebFlux（Netty）用事件循环，少量线程管理所有 IO 事件：
+
+```
+少量线程（CPU 核心数 × 2）
+  → 同时管理几万个连接
+  → 发出转发请求后不等，立刻处理下一个事件
+  → 下游响应回来时事件触发，继续处理
+```
+
+Gateway 的工作是转发，大量时间在等下游响应，非阻塞模型吞吐量高很多。微服务执行业务逻辑，同步写法更自然，Spring MVC 就够了。
+
+**DispatcherHandler vs DispatcherServlet** 职责完全相同（找处理器 → 执行 → 返回响应），只是一个基于 Servlet API（同步），一个基于 Reactive API（异步）：
+
+```java
+// Spring MVC
+void service(HttpServletRequest req, HttpServletResponse res) { ... }
+
+// WebFlux（Gateway 用的）
+Mono<Void> handle(ServerWebExchange exchange) { return ...; }
+```
+
+**请求完整路径（两段技术栈串联）：**
+
+```
+客户端请求
+       ↓
+mhp-gateway（WebFlux + Netty）
+  Netty 接收 TCP 连接
+  DispatcherHandler 派发
+  GlobalFilter 链（鉴权、Sentinel 限流）
+  NettyRoutingFilter 发出 HTTP 请求
+       ↓ 普通 HTTP（微服务只认 HTTP，不关心上游是 Netty 还是浏览器）
+mhp-account（Spring MVC + Tomcat）
+  Tomcat 接收 TCP 连接
+  DispatcherServlet 派发
+  Sa-Token 拦截器（验 token）
+  Controller 方法执行
+       ↓
+响应原路返回
+```

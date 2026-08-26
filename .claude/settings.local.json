@@ -10,7 +10,8 @@
       "Bash(cp -r /c/Users/admin/.m2/repository/. /e/Maven/repository/)",
       "Bash(sc query *)",
       "Bash(grep \"userStore$\")",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Bash(find E:\\\\dyh\\\\MHP\\\\BookSystem *)"
     ]
   }
 }

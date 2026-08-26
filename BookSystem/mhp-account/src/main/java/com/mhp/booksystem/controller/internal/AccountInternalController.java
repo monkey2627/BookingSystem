@@ -1,5 +1,6 @@
 package com.mhp.booksystem.controller.internal;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mhp.booksystem.common.Result;
 import com.mhp.booksystem.dto.feign.MerchantDTO;
@@ -25,6 +26,15 @@ public class AccountInternalController {
 
     private final UserService userService;
     private final MerchantService merchantService;
+
+    @GetMapping("/user/current")
+    public Result<Long> getCurrentUserId(@RequestHeader("token") String token) {
+        Object loginId = StpUtil.getLoginIdByToken(token);
+        if (loginId == null) {
+            return Result.fail(401, "token 无效或已过期");
+        }
+        return Result.ok(Long.parseLong(loginId.toString()));
+    }
 
     @GetMapping("/user/{id}")
     public Result<UserDTO> getUser(@PathVariable Long id) {

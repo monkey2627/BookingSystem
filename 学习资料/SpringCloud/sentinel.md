@@ -201,6 +201,51 @@ Sentinel 通过 AOP（切面编程）处理 `@SentinelResource`：
 
 ## 六、整合 Spring Cloud Gateway 实现网关限流
 
+### Sentinel 和 Gateway 各自是什么？
+
+**Gateway**（mhp-gateway）是一个独立的 Spring Boot 应用，打成 JAR 包运行，监听 80 端口。
+
+**Sentinel** 分两部分，性质完全不同：
+
+```
+Sentinel SDK（库，JAR 包）
+  → 嵌入到你的应用 JVM 里，负责实际的流量统计和拦截
+  → 不是独立进程，和 Gateway 跑在同一个 JVM 里
+
+Sentinel Dashboard（独立进程）
+  → 单独运行的 Spring Boot 应用（sentinel-dashboard.jar）
+  → 只负责提供可视化界面和下发规则
+  → 不参与实际流量控制，挂掉不影响限流
+```
+
+### "接入"的底层机制
+
+向 `mhp-gateway/pom.xml` 加一个依赖，Sentinel SDK 就嵌入了 Gateway 的 JVM：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.cloud</groupId>
+    <artifactId>spring-cloud-alibaba-sentinel-gateway</artifactId>
+</dependency>
+```
+
+这个依赖的自动配置做了一件事：**自动向 Gateway 的 GlobalFilter 链注册 `SentinelGatewayFilter`**，不需要写任何代码。此后每个进入 Gateway 的请求都会经过这个 Filter。
+
+```
+mhp-gateway 进程（同一个 JVM）
+├── Spring Cloud Gateway 核心
+│     GlobalFilter 链：SentinelGatewayFilter → AuthFilter → NettyRoutingFilter
+│
+└── Sentinel SDK（通过依赖引入，同一个 JVM）
+      ├── SentinelGatewayFilter（已注册进上面的 Filter 链）
+      ├── 内存中的规则表 FlowRule（路由 id → QPS 阈值）
+      └── 统计数据（每个路由的实时 QPS、RT）
+             ↕ TCP 心跳（端口 8719）
+Sentinel Dashboard（独立进程，localhost:8080）
+```
+
+### 配置
+
 ```yaml
 # mhp-gateway/application.yaml
 spring:
@@ -213,7 +258,8 @@ spring:
             - Path=/api/user/**,/api/merchant/**
     sentinel:
       transport:
-        dashboard: localhost:8080   # Sentinel 控制台
+        dashboard: localhost:8080   # Dashboard 地址（用于上报监控数据 + 接收规则）
+        port: 8719                  # Gateway 与 Dashboard 通信的本地端口
       scg:
         fallback:
           mode: response
@@ -221,7 +267,19 @@ spring:
           response-body: '{"code":429,"msg":"请求频率超限，请稍后重试"}'
 ```
 
+**`sentinel.scg.fallback`** 告诉 `SentinelGatewayFilter`：被限流时直接返回这个 JSON 响应，不做重定向。
+
 配置后，在 Sentinel 控制台的 **API 管理** 中可以对网关路由配置限流规则（按路由 id）。网关限流不依赖 `@SentinelResource`，规则是基于路由 id 的。
+
+### Gateway Sentinel vs 微服务内部 Sentinel
+
+Gateway 层的 Sentinel 是粗粒度入口防护，但有盲区：微服务之间的 Feign 直调不经过 Gateway，这部分只有微服务内部的 Sentinel 才能保护。两层分工：
+
+```
+外部请求 → Gateway Sentinel → mhp-booking
+                                   ↓ Feign 直调（不过 Gateway）
+                              mhp-account ← 只有这里的 Sentinel 能保护
+```
 
 ---
 

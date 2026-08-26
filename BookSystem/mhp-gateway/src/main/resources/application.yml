@@ -27,3 +27,16 @@ spring:
           uri: lb://mhp-social
           predicates:
             - Path=/api/post/**, /api/follow/**, /api/review/**, /api/complaint/**, /api/message/**, /api/upload/**, /ws/**
+
+        # AI Agent 服务（Python FastAPI，不注册 Nacos，直连本机端口）
+        # StripPrefix=2：/api/ai/chat → /chat，/api/ai/clear → /clear
+        # response-timeout 120s 支持长时间 SSE 流式输出
+        - id: mhp-ai
+          uri: http://localhost:8084
+          predicates:
+            - Path=/api/ai/**
+          filters:
+            - StripPrefix=2
+          metadata:
+            response-timeout: 120000
+            connect-timeout: 5000

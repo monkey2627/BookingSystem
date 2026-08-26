@@ -173,3 +173,19 @@ export const uploadApi = {
     return request.post<any, string>('/upload', form)
   },
 }
+
+// ── AI 助手 ───────────────────────────────────────────────
+// chat 返回原始 fetch Response，调用方自行处理 SSE 流；不走 axios 是因为 axios 不支持流式读取
+export const aiApi = {
+  chat: (message: string): Promise<Response> =>
+    fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        token: localStorage.getItem('token') ?? '',
+      },
+      body: JSON.stringify({ message }),
+    }),
+
+  clearHistory: () => request.delete<any, void>('/ai/clear'),
+}

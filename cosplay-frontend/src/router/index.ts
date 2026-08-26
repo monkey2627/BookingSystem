@@ -90,6 +90,12 @@ const router = createRouter({
       name: 'questionnaireManage',
       component: () => import('@/views/QuestionnaireManageView.vue'),
       meta: { requireAuth: true }
+    },
+    {
+      path: '/ai',
+      name: 'aiAssistant',
+      component: () => import('@/views/AiAssistantView.vue'),
+      meta: { requireAuth: true }
     }
   ]
 })

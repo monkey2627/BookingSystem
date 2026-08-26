@@ -705,13 +705,46 @@ FeignClientFactoryBean.getObject() 被调用
        ↓
 Feign.Builder 构建代理：
   encoder（序列化请求）+ decoder（反序列化响应）+ interceptors（拦截器链）
-       ↓ 包装负载均衡
-FeignBlockingLoadBalancerClient（内置 Spring Cloud LoadBalancer）
+  + delegate = FeignBlockingLoadBalancerClient（HTTP 发送层）
        ↓
 JDK Proxy.newProxyInstance() 生成接口的代理对象
        ↓
 代理对象注入到 Spring 容器（你 @Autowired 拿到的就是这个代理）
 ```
+
+### FeignBlockingLoadBalancerClient 是什么？（常见误区）
+
+**它不是动态代理，也不是 feign 核心包提供的。**
+
+```
+你声明的接口 AccountFeignClient
+       ↓ 被
+JDK 动态代理包裹（com.sun.proxy.$Proxy123）← 这才是"代理"，实现了你的接口
+  内部持有 SynchronousMethodHandler
+       ↓ SynchronousMethodHandler 持有的 HTTP 客户端是
+FeignBlockingLoadBalancerClient            ← 普通类，不是代理
+  内部持有 BlockingLoadBalancerClient（Spring Cloud LoadBalancer）
+       ↓
+HttpClient5（真正发 TCP 请求）
+```
+
+**两个容易混淆的点：**
+
+| | JDK 动态代理 | FeignBlockingLoadBalancerClient |
+|---|---|---|
+| 是什么 | 实现了你的业务接口（如 AccountFeignClient）的代理对象 | 普通的 `feign.Client` 实现类 |
+| 职责 | 把方法调用翻译成 HTTP 请求（解析注解、序列化参数）| 把服务名换成真实 IP:Port，再发送 |
+| 每个 @FeignClient 独立吗 | ✅ 每个接口有一个专属代理实例 | ❌ 所有 @FeignClient 共用同一个单例 |
+| 来自哪个包 | `feign-core`（OpenFeign 官方）| `spring-cloud-openfeign-core`（Spring Cloud）|
+
+**两个包的分工：**
+
+| 包 | 提供什么 |
+|---|---|
+| `feign-core`（OpenFeign 官方）| `feign.Client` 接口、`feign.RequestInterceptor` 接口、JDK 动态代理机制 |
+| `spring-cloud-openfeign-core`（Spring Cloud）| `FeignBlockingLoadBalancerClient`（桥接 LoadBalancer）、`SpringEncoder/SpringDecoder`、`FeignClientsConfiguration` 自动配置 |
+
+`FeignBlockingLoadBalancerClient` 存在的原因：OpenFeign 本身不知道 Nacos 和负载均衡是什么，Spring Cloud 在中间插入这一层来桥接。它是 Spring 容器中的一个单例 Bean，所有 `@FeignClient` 动态代理共用它。
 
 ### 一次 Feign 调用的完整流程
 
