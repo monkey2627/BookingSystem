@@ -58,4 +58,50 @@ c.format() 返回的是字符串
 c.format_messages() 返回的是消息列表
 以上三种是根据模板来填充其中字段，得到最终输入给图形的东西
 注意消息对象的方式，就不能在模板中声明变量
-* BaseMessagePromptTemplate参数列表
+* BaseMessagePromptTemplate参数列表![img_5.png](img_5.png)
+* BaseChatPromptTemplate参数列表：意思就是ChatPromptTemplate.from_messages
+* 传入的参数列表中的单个元素仍然可以是一个ChatPromptTemplate类型的
+* ![img_6.png](img_6.png)总的例子
+* partial()部分变量预填充，可以先填充模板的部分字段，用法：
+> c.partial(name="")
+* 消息占位符
+  * placeholder![img_7.png](img_7.png)
+  * messagePlaceholder ![img_8.png](img_8.png)
+  * 实际开发中会单独维护一个提示词模板文件，这个文件被人引用比如：
+# 工具
+* 明确指定了输入和输出的可调用函数
+* name.invoke({})
+* @tool标注
+* model.bind_tools([工具名])
+## 调用整体流程
+![img_9.png](img_9.png)
+注意，工具是我们的agent来调用，请求来自大模型，我们在应用中调用，调用完把结果append
+在message（toolmessage类型）里再传给模型
+## 工具的定义
+### 不使用@tool
+声明函数，将函数绑定在模型上
+#### convert_to_openai_tool
+#### description说明,python本来就有的
+说明
+Args:
+Returns:
+* 参数类型的说明
+### 使用@tool
+* 标识当前函数是一个工具
+* @tool(description="")
+* @tool(parse_docstring=)
+* 自定义args_schema:继承BaseModel
+  * Field(description=,default=)标注一个字段
+  * Literal，限制参数自能从固定的一部分值里面取
+  * 第二种方式，用json schema，直接传一个json的数据
+* 多工具调用：大模型的response中tool_calls字段不止一个
+    * 案例：
+* tool_choice:配置是否强制大模型调用工具，auto，required，none，具体的方法
+* 实践经验：清晰的描述，功能单一，处理工具失败，最好直接返回字符串，同步和异步
+# 结构化输出
+
+# 智能体
+# 中间件
+# 上下文与记忆
+# RAG
+# MCP与skills
