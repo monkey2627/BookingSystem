@@ -1,4 +1,4 @@
-# Dubbo 系统笔记（面试版）
+# Dubbo 系统笔记
 
 ---
 
@@ -7,7 +7,15 @@
 ### 什么是 RPC？
 
 RPC（Remote Procedure Call，远程过程调用）的目标：**让调用远程服务像调用本地方法一样**，开发者不用关心网络细节。
-
+远程服务指不在当前模块的功能，即微服务中不同服务之间相互调用也是RPC，跨进程
+跨进程的解决方式只有通过网络，那么需要解决的问题：通信方式、协议、序列化
+### 什么是SOA？
+SOA架构是由RPC架构演化而来的，解决的问题：1.调用失败怎么办2.某一个模块访问量特别大，但是没办法单独给这个模块做集群
+SOA就是将对应的模块单独抽取出来独立为一个进程，作为一个服务，这个单个的模块就能做水平扩展，
+### 异构系统的RPC调用？
+通过ESB，将不同编程语言的数据类型转换为统一的中间类型，有protobuf或者thft IDL
+### 什么是微服务？
+微服务又是SOA的升级，微服务体系中就完全没有子系统了，全都是服务化功能，所有的功能都抽取出来
 ### Dubbo 的六个核心角色
 
 ```
@@ -47,11 +55,17 @@ Consumer 代理反序列化 → 返回给调用方
 ```
 
 ---
-
+## Dubble的优点
+1.高性能通信 GRPC 
+2.高可扩展性 SPI多种序列化方式
 ## 二、核心注解 + 项目示例
-
+### 解决qos端口冲突问题
+三个配置
+### 协议端口
+默认20880，但为了避免多个服务之间冲突，建议改为设置port=-1，就能自动了
+### commons-api
+通用的东西
 ### 2.1 Provider 端（服务提供方）
-
 ```java
 // 1. 在 mhp-common 定义接口（Provider/Consumer 共同依赖）
 public interface RpcMerchantService {
@@ -72,7 +86,8 @@ public class RpcMerchantServiceImpl implements RpcMerchantService {
     }
 }
 ```
-
+引用@DubboService注解修饰的类型，springboot会创建这个类型的对象bean并发布为服务
+考虑兼容性建议@Service注解也加
 ### 2.2 Consumer 端（服务消费方）
 
 ```java
@@ -93,7 +108,8 @@ public class BookingServiceImpl {
     }
 }
 ```
-
+@DubboReference 作用类似@autowire
+消费者和提供者的关系在开发工程中并不是一个服务只能当一方
 ### 2.3 启动类
 
 ```java
@@ -116,9 +132,13 @@ dubbo:
 ```
 
 ---
-
+### @EnableDubbo
+用于扫描@Dubboservice注解并把对应的对象实例化，发布成RPC服务，默认
+扫描启动类所在包及其子包
+### @DubboComponentScan()
+用于显示指定扫描路径，同时也可以在配置文件中配置
 ## 三、注册中心的角色（以 Nacos 为例）
-
+* 用于管理provider集群
 ### 为什么需要注册中心？
 
 Consumer 不能把 Provider 的 IP 写死在配置里——Provider 可能有多台（横向扩展），也可能宕机（需要摘除）。注册中心解决**动态服务发现**问题。
@@ -392,3 +412,26 @@ dubbo:
 | SPI | Dubbo 插件化核心机制，框架所有组件均可按名替换 |
 | `failover` | 默认集群容错：失败自动切换重试（只用于幂等调用） |
 | `failfast` | 快速失败，不重试（写操作必用） |
+# dubble的实现原理
+1.为什么provider提供实现后，在另一个jvm中的consumer可以调用？consumer中调用的到底是什么？
+为什么这种方式就会使通信效率大大高于原始的openfeign呢？
+> 没有直接调用远端的服务，实则调用的是对应类的代理对象proxy，那么这个代理是如何得到和生成的呢？
+> 底层调用的是Proxy.newProxyInstance()来创建的代理,这是java的实现，那我如何知道应该生成这个代理呢？
+
+2.代理的核心工作是什么？
+>对调用服务的consumer屏蔽网络通信过程，最后通过代理来传递通信的数据 
+## Dubble RPC直连应用开发
+* consumer直接访问provider，没有引入注册中心，此时等价OpenFeign
+### 网络通信相关细化
+协议+通信方式+序列化
+![img.png](img.png)
+## Dubble的序列化详解
+常见的方式
+![img_1.png](img_1.png)
+![img_2.png](img_2.png)
+### Kryo序列化方式的使用
+* 不是原生支持的，需要引入dubbo-serilization-kryo的依赖
+* 在xml文件中配置 serialization=kryo
+* 在consumer中，url后面拼接serialization=kryo
+* 其他配置类似，只需要配置就可以
+## SPI技术
