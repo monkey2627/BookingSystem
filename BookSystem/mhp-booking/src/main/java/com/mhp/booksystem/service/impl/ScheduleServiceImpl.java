@@ -12,6 +12,7 @@ import com.mhp.booksystem.dto.feign.UserDTO;
 import com.mhp.booksystem.entity.RushRecord;
 import com.mhp.booksystem.entity.Schedule;
 import com.mhp.booksystem.feign.AccountFeignClient;
+import com.mhp.booksystem.rpc.RpcMerchantService;
 import com.mhp.booksystem.mapper.RushRecordMapper;
 import com.mhp.booksystem.mapper.ScheduleMapper;
 import com.mhp.booksystem.service.ScheduleService;
@@ -20,6 +21,7 @@ import com.mhp.booksystem.vo.RushResultVO;
 import com.mhp.booksystem.vo.ScheduleVO;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -44,6 +46,9 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
     private final StringRedisTemplate stringRedisTemplate;
     private final AccountFeignClient accountFeignClient;
 
+    @DubboReference(version = "1.0.0")
+    private RpcMerchantService rpcMerchantService;
+
     private DefaultRedisScript<Long> rushScript;
 
     @PostConstruct
@@ -56,7 +61,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
     @Override
     public void create(ScheduleCreateDTO dto) {
         Long userId = StpUtil.getLoginIdAsLong();
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);
         }
@@ -175,7 +180,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
         }
 
         Long userId = StpUtil.getLoginIdAsLong();
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);
         }
@@ -225,7 +230,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
         if (schedule == null) {
             throw new BusinessException(ResultCode.SCHEDULE_NOT_FOUND);
         }
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null || !merchant.getId().equals(schedule.getMerchantId())) {
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权限删除该档期");
         }
@@ -278,7 +283,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
         if (schedule == null) {
             throw new BusinessException(ResultCode.SCHEDULE_NOT_FOUND);
         }
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null || !merchant.getId().equals(schedule.getMerchantId())) {
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权限修改该排队记录");
         }

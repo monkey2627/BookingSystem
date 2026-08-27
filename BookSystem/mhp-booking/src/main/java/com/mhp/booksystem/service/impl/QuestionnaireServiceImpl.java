@@ -8,11 +8,12 @@ import com.mhp.booksystem.common.exception.BusinessException;
 import com.mhp.booksystem.dto.QuestionnaireCreateDTO;
 import com.mhp.booksystem.dto.feign.MerchantDTO;
 import com.mhp.booksystem.entity.QuestionnaireTemplate;
-import com.mhp.booksystem.feign.AccountFeignClient;
+import com.mhp.booksystem.rpc.RpcMerchantService;
 import com.mhp.booksystem.mapper.QuestionnaireTemplateMapper;
 import com.mhp.booksystem.service.QuestionnaireService;
 import com.mhp.booksystem.vo.QuestionnaireVO;
 import lombok.RequiredArgsConstructor;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
@@ -25,12 +26,14 @@ public class QuestionnaireServiceImpl extends ServiceImpl<QuestionnaireTemplateM
         implements QuestionnaireService {
 
     private final ObjectMapper objectMapper;
-    private final AccountFeignClient accountFeignClient;
+
+    @DubboReference(version = "1.0.0")
+    private RpcMerchantService rpcMerchantService;
 
     @Override
     public void create(QuestionnaireCreateDTO dto) {
         Long userId = StpUtil.getLoginIdAsLong();
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             throw new BusinessException(ResultCode.USER_NOT_MERCHANT);
         }
@@ -61,7 +64,7 @@ public class QuestionnaireServiceImpl extends ServiceImpl<QuestionnaireTemplateM
     @Override
     public List<QuestionnaireVO> getMyTemplates() {
         Long userId = StpUtil.getLoginIdAsLong();
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) return Collections.emptyList();
         return listByMerchant(merchant.getId());
     }
@@ -71,7 +74,7 @@ public class QuestionnaireServiceImpl extends ServiceImpl<QuestionnaireTemplateM
         Long userId = StpUtil.getLoginIdAsLong();
         QuestionnaireTemplate t = getById(id);
         if (t == null) throw new BusinessException(ResultCode.QUESTIONNAIRE_NOT_FOUND);
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null || !t.getMerchantId().equals(merchant.getId())) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }

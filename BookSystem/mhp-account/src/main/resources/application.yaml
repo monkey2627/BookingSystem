@@ -53,3 +53,12 @@ server:
 canal:
   server: localhost:11111
   destination: example
+
+dubbo:
+  application:
+    name: mhp-account
+  protocol:
+    name: tri       # Triple 协议（HTTP/2），Dubbo3 推荐，与 gRPC 互通
+    port: -1        # 随机端口，避免与 Spring Boot HTTP 8081 冲突
+  registry:
+    address: nacos://127.0.0.1:8848  # 复用已有 Nacos，不引入新中间件

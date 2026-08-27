@@ -10,10 +10,12 @@ import com.mhp.booksystem.dto.feign.BookingDTO;
 import com.mhp.booksystem.dto.feign.MerchantDTO;
 import com.mhp.booksystem.entity.Complaint;
 import com.mhp.booksystem.feign.AccountFeignClient;
-import com.mhp.booksystem.feign.BookingFeignClient;
+import com.mhp.booksystem.rpc.RpcBookingService;
+import com.mhp.booksystem.rpc.RpcMerchantService;
 import com.mhp.booksystem.mapper.ComplaintMapper;
 import com.mhp.booksystem.service.ComplaintService;
 import lombok.RequiredArgsConstructor;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -21,13 +23,18 @@ import org.springframework.stereotype.Service;
 public class ComplaintServiceImpl extends ServiceImpl<ComplaintMapper, Complaint> implements ComplaintService {
 
     private final AccountFeignClient accountFeignClient;
-    private final BookingFeignClient bookingFeignClient;
+
+    @DubboReference(version = "1.0.0")
+    private RpcMerchantService rpcMerchantService;
+
+    @DubboReference(version = "1.0.0")
+    private RpcBookingService rpcBookingService;
 
     @Override
     public void create(ComplaintCreateDTO dto) {
         Long complainantId = StpUtil.getLoginIdAsLong();
 
-        BookingDTO booking = bookingFeignClient.getBooking(dto.getOrderId()).getData();
+        BookingDTO booking = rpcBookingService.getBookingById(dto.getOrderId());
         if (booking == null) {
             throw new BusinessException(ResultCode.COMPLAINT_BOOKING_NOT_FOUND);
         }
@@ -42,7 +49,7 @@ public class ComplaintServiceImpl extends ServiceImpl<ComplaintMapper, Complaint
             respondentId = merchant.getUserId();
         } else {
             // 商家投诉客人
-            MerchantDTO merchant = accountFeignClient.getMerchantByUserId(complainantId).getData();
+            MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(complainantId);
             if (merchant == null || !booking.getMerchantId().equals(merchant.getId())) {
                 throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "您不是该预约的相关方");
             }

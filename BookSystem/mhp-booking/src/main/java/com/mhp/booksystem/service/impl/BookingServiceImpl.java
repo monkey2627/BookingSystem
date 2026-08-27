@@ -12,6 +12,7 @@ import com.mhp.booksystem.dto.feign.UserDTO;
 import com.mhp.booksystem.entity.Booking;
 import com.mhp.booksystem.entity.Schedule;
 import com.mhp.booksystem.feign.AccountFeignClient;
+import com.mhp.booksystem.rpc.RpcMerchantService;
 import com.mhp.booksystem.mapper.BookingMapper;
 import com.mhp.booksystem.mapper.ScheduleMapper;
 import com.mhp.booksystem.mq.MQSender;
@@ -20,6 +21,7 @@ import com.mhp.booksystem.vo.BookingVO;
 import com.mhp.booksystem.vo.CursorPageVO;
 import com.mhp.booksystem.vo.MerchantStatsVO;
 import lombok.RequiredArgsConstructor;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
@@ -43,6 +45,9 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     private final RedissonClient redissonClient;
     private final MQSender mqSender;
     private final AccountFeignClient accountFeignClient;
+
+    @DubboReference(version = "1.0.0")
+    private RpcMerchantService rpcMerchantService;
 
     /**
      * 创建预约 — 核心业务，包含分布式锁防并发重复预约。
@@ -142,7 +147,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     @Override
     public CursorPageVO<BookingVO> receivedBookings(Long lastId, int size, Integer serviceType, Integer status) {
         Long userId = StpUtil.getLoginIdAsLong();
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             return CursorPageVO.of(List.of(), false, null);
         }
@@ -198,7 +203,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
         }
 
         boolean isBuyerCancel = booking.getUserId().equals(userId);
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         boolean isMerchantCancel = merchant != null && booking.getMerchantId().equals(merchant.getId());
 
         if (!isBuyerCancel && !isMerchantCancel) {
@@ -234,7 +239,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     @Override
     public MerchantStatsVO getMerchantStats() {
         Long userId = StpUtil.getLoginIdAsLong();
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);
         }
@@ -273,7 +278,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
         if (booking == null) {
             throw new BusinessException(ResultCode.BOOKING_NOT_FOUND);
         }
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null || !booking.getMerchantId().equals(merchant.getId())) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }

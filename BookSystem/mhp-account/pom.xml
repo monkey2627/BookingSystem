@@ -104,6 +104,12 @@
             <artifactId>canal.protocol</artifactId>
         </dependency>
 
+        <!-- Dubbo3 RPC（Triple 协议，作为 Provider 暴露 RpcMerchantService） -->
+        <dependency>
+            <groupId>org.apache.dubbo</groupId>
+            <artifactId>dubbo-spring-boot-starter</artifactId>
+        </dependency>
+
         <!-- 配置提示 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

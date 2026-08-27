@@ -14,11 +14,13 @@ import com.mhp.booksystem.dto.feign.MerchantScoreUpdateDTO;
 import com.mhp.booksystem.dto.feign.UserDTO;
 import com.mhp.booksystem.entity.Review;
 import com.mhp.booksystem.feign.AccountFeignClient;
-import com.mhp.booksystem.feign.BookingFeignClient;
+import com.mhp.booksystem.rpc.RpcBookingService;
+import com.mhp.booksystem.rpc.RpcMerchantService;
 import com.mhp.booksystem.mapper.ReviewMapper;
 import com.mhp.booksystem.service.ReviewService;
 import com.mhp.booksystem.vo.ReviewVO;
 import lombok.RequiredArgsConstructor;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -35,14 +37,19 @@ import java.util.stream.Collectors;
 public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> implements ReviewService {
 
     private final AccountFeignClient accountFeignClient;
-    private final BookingFeignClient bookingFeignClient;
+
+    @DubboReference(version = "1.0.0")
+    private RpcMerchantService rpcMerchantService;
+
+    @DubboReference(version = "1.0.0")
+    private RpcBookingService rpcBookingService;
 
     @Override
     @Transactional
     public void create(ReviewCreateDTO dto) {
         Long userId = StpUtil.getLoginIdAsLong();
 
-        BookingDTO booking = bookingFeignClient.getBooking(dto.getOrderId()).getData();
+        BookingDTO booking = rpcBookingService.getBookingById(dto.getOrderId());
         if (booking == null || !booking.getUserId().equals(userId)) {
             throw new BusinessException(ResultCode.BOOKING_NOT_FOUND);
         }
@@ -105,7 +112,7 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
             throw new BusinessException(ResultCode.REVIEW_NOT_FOUND);
         }
 
-        MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
+        MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null || !review.getMerchantId().equals(merchant.getId())) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
@@ -125,7 +132,7 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         MerchantScoreUpdateDTO scoreDTO = new MerchantScoreUpdateDTO();
         scoreDTO.setAvgScore(avgScore);
         scoreDTO.setReviewCount(count);
-        accountFeignClient.updateMerchantScore(merchantId, scoreDTO);
+        rpcMerchantService.updateMerchantScore(merchantId, scoreDTO);
     }
 
     private ReviewVO toVO(Review r, UserDTO user) {
