@@ -1,184 +1,186 @@
-# 常见模型初始化参数
-1. temperature：控制模型输出的随机化，值越大越随机
-2. 客户端与连接：
-   3. model_kwargs存放模型支持但是langchain没有直接列出来的字段
-   4.extra_body:存放模型厂商基于openai api协议扩展的字段
-4. 模型推理参数：
-   temperature：控制模型输出的随机化，值越大越随机
-4. 
-# token是什么？
-大模型通过分词器将文本拆分后的最小语义单元
-# 模型的调用
-* invoke、ainvoke
-> responce = model.invoke(input,config)
+# LangChain 系统笔记
 
-其中config参数以dict形式存在，在调用模型的时候动态配置和控制模型的行为
-![img_2.png](img_2.png)，其和init模型的时候传入的那个一样，但如果在运行时显示传入，其会覆盖init中的内容
-做到能对每个请求进行不同的配置
-input可以直接是：1.直接输入文本2.列表，每个列表元素是一个字典
-[{"role:"user","content":"具体的内容"},{}]
-多轮对话场景如果不传递历史，ai会失忆
-消息对象列表：SystemMessage对象、HumanMessage对象AssistantMessage对象
-直接给一个存了对象的列表
-返回值：AIMessage的对象
-![img.png](img.png)![img_1.png](img_1.png)
-* stream
-流式输出
-* batch
-一次性发送多个请求
-* 异步方法：不用阻塞主线程，阻塞等待模型返回，加快效率
-* 美化模型输出：pretty print
-* model.profile有的可能可以查看模型配置
-# 消息和提示词模板
-## 消息的类型
-langchain中消息类型通过role区分，也就是我们传给模型的那个信息里的role
-system，为模型设定角色，user：表示用户的输入，assistant：表示大模型的回复，tool：工具调用消息
-## 消息格式
-* json
-* 对象
-  * 对象字段：content：即输入给模型的内容![img_4.png](img_4.png)
-    * content还可以保存多模态的数据，每一块标明text和type，使用字典类型
-    * content_blocks:是一个字典的列表，可以替代原来的contnt字段对输入进行格式化，
-    * 同时也可以对我们的输出进行格式化，统一输出格式
-    * 直接就是respond.content_blocks,其是懒加载的，被调用后才会被解析
-  *       metadata：元数据字段，自己随便定义，对消息进行分组，但并不是所有模型/模型供应商都支持
-  * toolMessage：有一个tool_call_id
-# 实战
-## 对话历史管理
-每次将回复append到输入中
-# langsmith的基本使用
-![img_3.png](img_3.png)
-## tracing
-# 提示词模板
-ChatPromptTemplate
-## 实例化
-c = ChatPromptTemplate.from_messages([(),(),()])实例化一个模板出来
-c.invoke() 
-c.format() 返回的是字符串
-c.format_messages() 返回的是消息列表
-以上三种是根据模板来填充其中字段，得到最终输入给图形的东西
-注意消息对象的方式，就不能在模板中声明变量
-* BaseMessagePromptTemplate参数列表![img_5.png](img_5.png)
-* BaseChatPromptTemplate参数列表：意思就是ChatPromptTemplate.from_messages
-* 传入的参数列表中的单个元素仍然可以是一个ChatPromptTemplate类型的
-* ![img_6.png](img_6.png)总的例子
-* partial()部分变量预填充，可以先填充模板的部分字段，用法：
-> c.partial(name="")
-* 消息占位符
-  * placeholder![img_7.png](img_7.png)
-  * messagePlaceholder ![img_8.png](img_8.png)
-  * 实际开发中会单独维护一个提示词模板文件，这个文件被人引用比如：
-# 工具
-* 明确指定了输入和输出的可调用函数
-* name.invoke({})
-* @tool标注
-* model.bind_tools([工具名])
-## 调用整体流程
-![img_9.png](img_9.png)
-注意，工具是我们的agent来调用，请求来自大模型，我们在应用中调用，调用完把结果append
-在message（toolmessage类型）里再传给模型
-## 工具的定义
-### 不使用@tool
-声明函数，将函数绑定在模型上
-#### convert_to_openai_tool
-#### description说明,python本来就有的
-说明
-Args:
-Returns:
-* 参数类型的说明
-### 使用@tool
-* 标识当前函数是一个工具
-* @tool(description="")
-* @tool(parse_docstring=)
-* 自定义args_schema:继承BaseModel
-  * Field(description=,default=)标注一个字段
-  * Literal，限制参数自能从固定的一部分值里面取
-  * 第二种方式，用json schema，直接传一个json的数据
-* 多工具调用：大模型的response中tool_calls字段不止一个
-    * 案例：
-* tool_choice:配置是否强制大模型调用工具，auto，required，none，具体的方法
-* 实践经验：清晰的描述，功能单一，处理工具失败，最好直接返回字符串，同步和异步
-### 有很多内置的工具，可以直接用
-# 结构化输出
-## Pydantic结构化
-class a(BaseModel):
-    """
-      工具的描述
-    """
-## TypedDisct
-## JSON Schema
-## 数据类
-# 智能体
-* 统一为create_agent(),将大模型、工具、prompt等传入，来创建一个智能体
-* 模型的传入方式：1.传入一个字符串，类似之前模型的创建，注意要加load_dovenv2.直接先创建一个模型，然后传入模型实例
-* 调用：agent.invoke(),传入的是消息列表，返回的也是字典包含的消息列表，和模型调用好像是一样的
-例子：
-* 绑定工具：静态 or 借助中间件动态
-* 1.静态：创建的时候传入tools=[ , , ,]
-## 工具调用流程分析
-ReAct结构 思考-行动-观察
-* 设置agent名字：传入name=
-## 结构化输出
-1.ProviderStrategy原生的结构化输出
-2.ToolStrategy不支持原生结构化输出的模型，相当于创建一个虚拟工具，这个工具引导模型产生对应结构的输出
-### ToolStrategy详解
-三个参数:schema：对应之前讲的四种结构化输出，表明用哪一种；Union(),提供多个结构化类，对应不同的问题可以选用
-tool_message_content:设置显示在ToolMessage中content上的数据，因为实际的大模型使用的数据其实不依靠contnt，可以节省token
-handle_errors：默认为true，捕获所有异常，false：关闭自动重试，直接抛出异常
-设定为指定异常类型：捕获这种异常，有：multiplestructuredoutputserror，structuredoutputvalidationerror
-设定为指定的错误处理函数：直接把函数给handle_errors参数
-设定为自定义字符串：
-## 流式输出及模式
-agent.stream()调用，stream_mode参数控制
-values：每步都会输出完整的状态信息等
-updates：默认使用，只增量更新状态中发生变化的内容
-messages：会输出流式返回的token已经相关的元数据
-tasks：输出当前任务开始时间，结束时间等
-debug:
-custom:
-# 中间件
-添加一些钩子函数，在真实的业务场景之中优化，处理一些不属于核心业务逻辑但是会影响执行过程的问题
-## 常用内置中间件及其使用
-### 成本与资源控制类
-model call limit等
-### 稳定性与容错保障
-### 安全与合规风控
-### 决策增强与智能编排
-### 执行能力扩展
-### 开发调试与测试辅助
-## 多个中间件组合及执行顺序
-* 书写顺序和执行顺序有关
-## 自定义中间件
-* 钩子函数在某个特定流程，被框架系统或者主流程自动调用的扩展函数，定义中间件实际上就是创建对应函数
-* 参数state runtime 是谁传入的？
-### 基于装饰器的实现
+---
 
-###
-# 上下文与记忆
-# RAG
-# MCP与skills
+## 一、LangChain 是什么
+
+LangChain 是构建 LLM 应用的开发框架，核心价值：
+
+- **标准化接口**：用同一套 API 调用 OpenAI、Claude、本地模型等，切换模型无需改业务代码
+- **组合能力**：通过 LCEL（LangChain Expression Language）把模型、提示词、工具、输出解析器串联成"链"
+- **生态完整**：内置向量数据库集成、Agent 框架、RAG 工具链、记忆管理等
+
+---
+
+## 二、模型初始化
+
+### 常用初始化参数
+
+```python
+from langchain_openai import ChatOpenAI
+
+model = ChatOpenAI(
+    model="gpt-4o",              # 模型名称
+    temperature=0.7,             # 随机性（0=确定，2=最随机，推荐 0~1）
+    max_tokens=2048,             # 最大输出 token 数
+    timeout=30,                  # 请求超时秒数
+    max_retries=2,               # 失败重试次数
+    api_key="sk-...",            # 也可通过环境变量 OPENAI_API_KEY 设置
+    base_url="https://...",      # 自定义 API 地址（国内代理、本地部署等）
+    model_kwargs={               # 模型支持但 LangChain 未直接暴露的参数
+        "top_p": 0.9,
+        "frequency_penalty": 0.5,
+    },
+    extra_body={                 # 模型厂商基于 OpenAI 协议扩展的字段
+        "enable_thinking": True, # 如 DeepSeek 的思考模式
+    }
+)
+```
+
+**参数优先级**：`model_kwargs` 存放模型支持但 LangChain 未列出的通用参数；`extra_body` 存放特定厂商扩展的私有字段（两者不同层级）。
+
+### Token 是什么
+
+大模型通过**分词器（tokenizer）**将文本拆分后的最小语义单元：
+- 英文：约 1 个单词 ≈ 1~2 个 token
+- 中文：约 1 个汉字 ≈ 1 个 token（具体看模型）
+- **费用 = 输入 token 数 × 输入单价 + 输出 token 数 × 输出单价**
+
+---
+
+## 三、模型调用方式
+
+### invoke / ainvoke（基础调用）
+
+```python
+# 同步调用
+response = model.invoke(input, config=None)
+
+# 异步调用（不阻塞主线程，适合 Web 应用）
+response = await model.ainvoke(input)
+```
+
+**`input` 支持三种形式：**
+
+```python
+# 1. 字符串
+model.invoke("你好")
+
+# 2. 字典列表（OpenAI 原生格式）
+model.invoke([{"role": "user", "content": "你好"}])
+
+# 3. 消息对象列表（LangChain 推荐）
+model.invoke([HumanMessage("你好")])
+```
+
+**`config` 参数**：以字典形式传入，在运行时动态覆盖 init 时的参数，实现对每个请求的独立控制：
+
+```python
+model.invoke("你好", config={"temperature": 0, "max_tokens": 100})
+```
+
+**返回值**：`AIMessage` 对象，`.content` 取文本内容，`.pretty_print()` 格式化打印。
+
+### stream（流式输出）
+
+```python
+for chunk in model.stream("讲一个故事"):
+    print(chunk.content, end="", flush=True)
+
+# 异步流式
+async for chunk in model.astream("讲一个故事"):
+    print(chunk.content, end="", flush=True)
+```
+
+### batch（批量调用）
+
+```python
+# 一次性并发发送多个请求
+responses = model.batch(["问题1", "问题2", "问题3"])
+```
+
+---
+
+## 四、消息类型
+
+LangChain 中所有消息通过 `role` 区分，对应关系：
+
+| 消息类型 | role | 说明 |
+|---------|------|------|
+| `SystemMessage` | system | 设定模型角色和行为规范 |
+| `HumanMessage` | user | 用户输入 |
+| `AIMessage` | assistant | 模型回复 |
+| `ToolMessage` | tool | 工具调用结果，**必须包含 `tool_call_id`** |
+
+```python
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+
+messages = [
+    SystemMessage("你是一个专业的 Python 老师"),
+    HumanMessage("什么是列表推导式？"),
+]
+response = model.invoke(messages)   # 返回 AIMessage
+```
+
+### 多轮对话历史管理
+
+模型无状态，每次请求必须把完整历史带上，否则"失忆"：
+
+```python
+history = []
+history.append(HumanMessage("我叫张三"))
+response = model.invoke(history)
+history.append(response)           # 把 AIMessage 也加入历史
+
+history.append(HumanMessage("我叫什么名字？"))
+response = model.invoke(history)   # 模型能记住"张三"
+```
+
+### 消息内容格式详解
+
+**多模态内容**（文本 + 图片）：
+
+```python
+HumanMessage(content=[
+    {"type": "text", "text": "这张图里有什么？"},
+    {"type": "image_url", "image_url": {"url": "https://..."}}
+])
+```
+
+**`content_blocks`**：消息对象的懒加载字段，被访问后才解析，可统一格式化输入输出：
+
+```python
+response.content_blocks   # 访问时才解析，返回结构化块列表
+```
+
+**`metadata`**：自定义元数据字段，用于消息分组/标记（不传给模型 API，仅应用层使用）：
+
+```python
+HumanMessage("你好", metadata={"session_id": "abc123", "user_id": 1})
+```
+
+---
+
+## 五、提示词模板（ChatPromptTemplate）
+
 ### 基本用法
 
-模板让提示词可以复用，支持变量填充。
+模板让提示词可复用，支持变量占位符填充。
 
 ```python
 from langchain_core.prompts import ChatPromptTemplate
 
-# 定义模板
 prompt = ChatPromptTemplate.from_messages([
     ("system", "你是一个{language}专家，请用简洁的方式回答问题"),
     ("human", "{question}"),
 ])
 
-# 填充变量 → 得到消息列表
-messages = prompt.invoke({"language": "Python", "question": "什么是装饰器？"})
-
-# 与模型组合（LCEL 链）
+# 与模型组合成链（LCEL）
 chain = prompt | model
 response = chain.invoke({"language": "Python", "question": "什么是装饰器？"})
 ```
 
-### 三种调用方法
+### 三种调用方法对比
 
 ```python
 prompt.invoke({"var": "value"})          # 返回 ChatPromptValue（可直接传给模型）
@@ -186,43 +188,43 @@ prompt.format({"var": "value"})          # 返回字符串
 prompt.format_messages({"var": "value"}) # 返回消息对象列表
 ```
 
-### 传入消息对象（不使用变量）
+### 元组 vs 消息对象
 
 ```python
-# 直接传消息对象时，不能在模板中使用变量
+# ❌ 错误：直接传消息对象，变量占位符无效
 prompt = ChatPromptTemplate.from_messages([
     SystemMessage("你是专家"),
-    HumanMessage("{question}"),  # ❌ 这样写变量无效，因为是对象不是元组
+    HumanMessage("{question}"),   # 这里的 {question} 不会被替换，是字面字符串
 ])
 
-# ✅ 正确：用元组 (role, "模板字符串") 才支持变量
+# ✅ 正确：用元组 (role, "模板字符串") 才支持变量替换
 prompt = ChatPromptTemplate.from_messages([
     ("system", "你是专家"),
-    ("human", "{question}"),    # ✅ 元组形式支持变量
+    ("human", "{question}"),      # 这里的 {question} 会被替换
 ])
 ```
 
 ### 部分变量预填充（partial）
 
 ```python
-# 先填充固定变量，生成新模板
+# 先固定部分变量，生成新模板
 partial_prompt = prompt.partial(language="Python")
 
-# 使用时只需传剩余变量
+# 使用时只传剩余变量
 chain = partial_prompt | model
 chain.invoke({"question": "什么是 GIL？"})
 ```
 
 ### 消息占位符（MessagesPlaceholder）
 
-用于在模板中插入动态的消息列表（如对话历史）：
+用于在模板固定位置插入一个动态消息列表（如对话历史）：
 
 ```python
 from langchain_core.prompts import MessagesPlaceholder
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", "你是一个助手"),
-    MessagesPlaceholder("history"),   # 这里插入历史消息列表
+    MessagesPlaceholder("history"),    # 运行时插入历史消息列表
     ("human", "{question}"),
 ])
 
@@ -247,7 +249,7 @@ chain = prompt | model | output_parser
 result = chain.invoke({"question": "..."})
 ```
 
-每个组件都实现了 `Runnable` 接口，支持 invoke / stream / batch / ainvoke 等方法，链整体也支持这些方法。
+**核心机制**：每个组件都实现了 `Runnable` 接口，链整体也是一个 Runnable，支持所有调用方式：
 
 ```python
 # 流式输出整个链
@@ -256,24 +258,38 @@ for chunk in chain.stream({"question": "讲个故事"}):
 
 # 批量调用链
 results = chain.batch([{"question": "Q1"}, {"question": "Q2"}])
+
+# 异步调用链
+result = await chain.ainvoke({"question": "..."})
 ```
+
+**Runnable 接口方法汇总**：
+
+| 方法 | 说明 |
+|------|------|
+| `invoke` | 同步调用，返回完整结果 |
+| `ainvoke` | 异步调用 |
+| `stream` | 同步流式输出 |
+| `astream` | 异步流式输出 |
+| `batch` | 批量并发调用 |
+| `abatch` | 异步批量调用 |
 
 ---
 
 ## 七、LangSmith（可观测性平台）
 
-LangSmith 是 LangChain 官方的追踪平台，记录每次调用的输入/输出/token 消耗/耗时。
+LangSmith 是 LangChain 官方的追踪平台，记录每次调用的输入/输出/token 消耗/耗时，适合调试复杂链路。
 
 ```python
 import os
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_API_KEY"] = "ls__..."
-os.environ["LANGCHAIN_PROJECT"] = "my-project"   # 项目名称
+os.environ["LANGCHAIN_PROJECT"] = "my-project"
 
-# 之后的所有 LangChain 调用会自动上报到 LangSmith
+# 之后所有 LangChain 调用自动上报，无需改业务代码
 ```
 
-登录 `smith.langchain.com` 即可查看调用链路图，适合调试复杂 Agent。
+登录 `smith.langchain.com` 查看每一步的输入输出、耗时、token 花费，以及完整的调用链路图。
 
 ---
 
@@ -290,17 +306,18 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from typing import Literal
 
-# 简单写法：docstring 自动成为 description
+# 简单写法：docstring 自动成为 description，影响模型如何选择工具
 @tool
 def get_weather(city: str) -> str:
     """查询指定城市的天气。city: 城市名称（中文）"""
     return f"{city}今天天气晴，气温25度"
 
-# 复杂写法：自定义参数 schema
+# 复杂写法：自定义参数 schema（精确控制参数描述和约束）
 class SearchInput(BaseModel):
     query: str = Field(description="搜索关键词")
     max_results: int = Field(default=5, description="最大返回条数")
     category: Literal["新闻", "技术", "生活"] = Field(description="搜索分类")
+    # Literal 限制参数只能从固定值中取，防止模型乱填
 
 @tool(args_schema=SearchInput)
 def search(query: str, max_results: int = 5, category: str = "新闻") -> str:
@@ -308,7 +325,7 @@ def search(query: str, max_results: int = 5, category: str = "新闻") -> str:
     return f"搜索 '{query}' 的前{max_results}条{category}结果..."
 ```
 
-**方法二：不用装饰器**
+**方法二：StructuredTool（不用装饰器）**
 
 ```python
 from langchain_core.tools import StructuredTool
@@ -323,91 +340,105 @@ tool = StructuredTool.from_function(add)
 ### 绑定工具到模型
 
 ```python
-model_with_tools = model.bind_tools([get_weather, search])
+model_with_tools = model.bind_tools(
+    tools=[get_weather, search],
+    tool_choice="auto",     # auto（模型自己决定）/ required（必须调用）/ none（不调用）
+    # 强制指定某个工具：tool_choice={"type": "function", "function": {"name": "get_weather"}}
+)
 
 response = model_with_tools.invoke("北京今天天气怎么样？")
-# response.tool_calls 包含模型决定调用的工具信息
 print(response.tool_calls)
 # [{"name": "get_weather", "args": {"city": "北京"}, "id": "call_xxx"}]
 ```
+
+**关键理解**：模型返回的 `tool_calls` 只是"我想调用哪个工具、传什么参数"的意图声明，**实际执行工具是应用层的责任**，不是模型自动执行的。
 
 ### 完整工具调用流程
 
 ```python
 from langchain_core.messages import ToolMessage
 
-# 1. 模型决定调用哪些工具
-response = model_with_tools.invoke(messages)
+messages = [HumanMessage("北京今天天气如何？")]
 
-# 2. 我们在应用层执行工具
+# 第一轮：模型决定调用哪些工具
+response = model_with_tools.invoke(messages)
+messages.append(response)   # 把含 tool_calls 的 AIMessage 加入历史
+
+# 应用层执行工具（可能一次返回多个 tool_call）
 if response.tool_calls:
     for tool_call in response.tool_calls:
-        tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
-        tool_result = tools_map[tool_name].invoke(tool_args)
-        
-        # 3. 把工具结果封装成 ToolMessage 追加到消息历史
-        messages.append(response)  # AIMessage（含 tool_calls）
+        tool_result = tools_map[tool_call["name"]].invoke(tool_call["args"])
         messages.append(ToolMessage(
             content=str(tool_result),
-            tool_call_id=tool_call["id"]
+            tool_call_id=tool_call["id"]   # 必须对应 tool_calls 里的 id
         ))
 
-# 4. 再次调用模型，得到最终回答
+# 第二轮：模型看到工具结果，生成最终回答
 final_response = model_with_tools.invoke(messages)
 ```
 
-### 工具配置参数
+**多工具并行调用**：模型可在一次回复中的 `tool_calls` 里返回多个工具调用意图，需要对每个都执行并追加 ToolMessage。
 
-```python
-model_with_tools = model.bind_tools(
-    tools=[get_weather, search],
-    tool_choice="auto",     # auto（模型自己决定）/ required（必须调用）/ none（不调用）
-    # 也可以指定工具名：tool_choice={"type": "function", "function": {"name": "get_weather"}}
-)
-```
+### 工具实践建议
 
-### 多工具并行调用
-
-模型可以在一次回复中调用多个工具：
-
-```python
-response.tool_calls  # 可能包含多个 tool_call 对象
-# 需要对每个都执行并追加 ToolMessage
-```
-
-### 实践建议
-
-- 工具 description 要清晰准确，直接影响模型的工具选择
-- 工具应功能单一，一个工具只做一件事
-- 工具最好返回字符串（方便模型读取）
-- 处理工具调用失败，返回错误信息而非抛出异常
-- 同步函数和异步函数都可以，对应 invoke 和 ainvoke
+- description 要清晰准确，它直接决定模型选择哪个工具
+- 一个工具只做一件事（单一职责）
+- 工具最好返回字符串，方便模型读取
+- 调用失败时返回错误描述字符串，而非抛出异常（让模型感知到失败并处理）
+- 同步/异步函数均可（对应 invoke/ainvoke）
 
 ---
 
 ## 九、结构化输出
 
-让模型按照指定 schema 输出 JSON，而非自由文本。
+让模型按照指定 schema 输出结构化 JSON，而非自由文本。
+
+### 四种 Schema 定义方式
 
 ```python
+# 方式一：Pydantic（推荐，有类型验证）
 from pydantic import BaseModel, Field
 
 class MovieReview(BaseModel):
+    """电影评价"""
     title: str = Field(description="电影名称")
-    rating: float = Field(description="评分，1-10分", ge=1, le=10)
+    rating: float = Field(description="评分1-10", ge=1, le=10)
     summary: str = Field(description="简短评价，50字以内")
     recommend: bool = Field(description="是否推荐观看")
 
-# 方式一：with_structured_output（推荐，自动处理解析）
+# 方式二：TypedDict（简单，无验证）
+from typing import TypedDict
+class MovieReview(TypedDict):
+    title: str
+    rating: float
+
+# 方式三：JSON Schema（字典形式）
+schema = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "rating": {"type": "number"}
+    }
+}
+
+# 方式四：dataclass
+from dataclasses import dataclass
+@dataclass
+class MovieReview:
+    title: str
+    rating: float
+```
+
+### 两种使用方式
+
+```python
+# 推荐：with_structured_output（自动处理解析，一步到位）
 structured_model = model.with_structured_output(MovieReview)
 result = structured_model.invoke("评价一下《流浪地球》")
-print(result.title)    # 访问结构化字段
-print(result.rating)
+print(result.title, result.rating)  # 直接访问字段
 
-# 方式二：输出解析器
+# 输出解析器（链式写法）
 from langchain_core.output_parsers import JsonOutputParser
-
 parser = JsonOutputParser(pydantic_object=MovieReview)
 chain = prompt | model | parser
 result = chain.invoke({"movie": "流浪地球"})
@@ -417,50 +448,162 @@ result = chain.invoke({"movie": "流浪地球"})
 
 ## 十、智能体（Agent）
 
-Agent = 让模型自主决策"调用哪些工具、调用几次、以什么顺序"，直到得到最终答案。
+Agent = 让模型**自主决策**：调用哪些工具、调用几次、以什么顺序，循环直到得到最终答案。
 
-### ReAct Agent（最常用模式）
+### 核心概念：ReAct 模式
 
-ReAct = **Re**asoning + **Act**ing：模型交替进行推理（思考做什么）和行动（调用工具）。
+ReAct = **Re**asoning + **Act**ing，模型交替进行：
+- **Reasoning（推理）**：思考下一步要做什么
+- **Acting（行动）**：调用工具获取信息
+- **Observation（观察）**：看工具返回结果，决定是否继续
+
+### 创建 Agent（LangGraph prebuilt）
 
 ```python
-from langchain.agents import create_react_agent, AgentExecutor
-from langchain import hub
+from langgraph.prebuilt import create_react_agent
 
-# 使用官方 ReAct 提示词模板
-prompt = hub.pull("hwchase17/react")
-
-# 创建 agent
-agent = create_react_agent(model, tools=[search, get_weather], prompt=prompt)
-
-# AgentExecutor 处理循环调用
-executor = AgentExecutor(agent=agent, tools=[search, get_weather], verbose=True)
-
-result = executor.invoke({"input": "北京今天天气如何？搜索相关新闻"})
-print(result["output"])
+agent = create_react_agent(
+    model,                         # 模型实例，或直接传模型名称字符串
+    tools=[search, get_weather],   # 工具列表（静态绑定）
+    name="my_assistant",           # Agent 名称
+    state_modifier="你是一个有用的助手，请尽量简洁回答"  # 系统提示词
+)
 ```
 
-### Tool Calling Agent（更简洁，推荐）
+**调用方式**（输入输出与 model.invoke 一致，都是消息列表）：
 
 ```python
-from langchain.agents import create_tool_calling_agent, AgentExecutor
+result = agent.invoke({"messages": [HumanMessage("北京今天天气如何？")]})
+print(result["messages"][-1].content)   # 最终回答
+```
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "你是一个有用的助手"),
-    MessagesPlaceholder("chat_history", optional=True),
-    ("human", "{input}"),
-    MessagesPlaceholder("agent_scratchpad"),  # Agent 的中间步骤
-])
+### 流式输出与 stream_mode
 
-agent = create_tool_calling_agent(model, tools, prompt)
-executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=5)
+```python
+for chunk in agent.stream(
+    {"messages": [HumanMessage("帮我查天气并搜索相关新闻")]},
+    stream_mode="updates"   # 控制输出粒度
+):
+    print(chunk)
+```
 
-result = executor.invoke({"input": "帮我查询今天北京的天气"})
+| stream_mode | 说明 | 适用场景 |
+|-------------|------|---------|
+| `updates`（默认） | 只输出每步**新增/变化**的内容 | 通用，节省输出量 |
+| `values` | 每步都输出**完整状态** | 需要全局状态快照 |
+| `messages` | 流式输出**每个 token** + 元数据 | 实时打字机效果 |
+| `tasks` | 输出每个任务的开始/结束时间 | 性能分析 |
+| `debug` | 详细调试信息 | 开发调试 |
+| `custom` | 自定义输出 | 特殊场景 |
+
+### Agent 结构化输出
+
+Agent 最终回答也可以是结构化数据：
+
+**ProviderStrategy（原生结构化，推荐）**：模型原生支持时直接用
+
+```python
+agent = create_react_agent(
+    model,
+    tools=tools,
+    response_format=MovieReview   # 直接传 Pydantic 模型
+)
+```
+
+**ToolStrategy（虚拟工具策略）**：模型不支持原生结构化输出时使用，通过创建一个"虚拟工具"引导模型输出符合 schema 的内容
+
+```python
+from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt.chat_agent_executor import StructuredResponseSchema
+
+agent = create_react_agent(
+    model,
+    tools=tools,
+    response_format=(
+        "请用指定格式总结结果",
+        MovieReview    # 或 Union(TypeA, TypeB) 提供多个 schema 让模型选择
+    )
+)
+```
+
+ToolStrategy 的 `handle_errors` 参数控制解析失败时的行为：
+
+| 值 | 行为 |
+|----|------|
+| `True`（默认） | 自动捕获所有异常，触发重试 |
+| `False` | 关闭自动重试，直接抛出异常 |
+| 异常类型 | 只捕获该类异常（如 `StructuredOutputValidationError`） |
+| 错误处理函数 | 调用自定义函数处理错误 |
+| 字符串 | 把该字符串作为错误信息返回给模型 |
+
+---
+
+## 十一、中间件（Hooks）
+
+中间件是**钩子函数**（hook）——在 Agent 执行流程的特定节点被框架自动调用的扩展函数，用于处理不属于核心业务逻辑但影响执行过程的问题（如限流、鉴权、日志、容错等）。
+
+### 内置中间件分类
+
+| 类别 | 作用 | 典型场景 |
+|------|------|---------|
+| **成本与资源控制** | 限制模型调用次数、token 预算 | 防止费用超支，限制单次对话最多调用 N 次模型 |
+| **稳定性与容错** | 自动重试、降级回退 | 模型超时自动重试，失败时换备用模型 |
+| **安全与合规** | 输入/输出内容过滤 | 拦截敏感词，防止提示词注入 |
+| **决策增强** | 路由、规划增强 | 根据问题类型自动选择不同子 Agent |
+| **执行能力扩展** | 并行/串行任务编排 | 多个工具并发执行，汇总结果 |
+| **开发调试** | 追踪、测试辅助 | 记录每步输入输出，方便调试 |
+
+### 多中间件的执行顺序
+
+**书写顺序决定执行顺序**，与洋葱模型类似：
+
+```
+请求进入 → 中间件A（前处理）→ 中间件B（前处理）→ 核心逻辑 → 中间件B（后处理）→ 中间件A（后处理）→ 响应返回
+```
+
+### 自定义中间件（基于装饰器）
+
+钩子函数接收两个参数：`state`（当前状态）和 `config`（运行时配置），由框架自动传入：
+
+```python
+from langgraph.prebuilt import create_react_agent
+from langchain_core.runnables import RunnableConfig
+
+# before_model_hook：模型调用前触发
+def my_before_hook(state, config: RunnableConfig):
+    messages = state["messages"]
+    print(f"[Hook] 即将调用模型，当前消息数：{len(messages)}")
+    # 可以修改 state 或直接返回（不修改则返回 None）
+    return state
+
+# after_model_hook：模型调用后触发
+def my_after_hook(state, config: RunnableConfig):
+    last_message = state["messages"][-1]
+    print(f"[Hook] 模型回复：{last_message.content[:50]}...")
+    return state
+
+agent = create_react_agent(
+    model,
+    tools=tools,
+    pre_model_hook=my_before_hook,
+    post_model_hook=my_after_hook,
+)
+```
+
+**实际应用示例——调用次数限制**：
+
+```python
+def call_limit_hook(state, config: RunnableConfig):
+    call_count = state.get("call_count", 0)
+    if call_count >= 5:
+        raise Exception("已达到最大调用次数限制")
+    state["call_count"] = call_count + 1
+    return state
 ```
 
 ---
 
-## 十一、对话历史与记忆管理
+## 十二、对话历史与记忆管理
 
 ### 手动管理（最可控）
 
@@ -476,7 +619,7 @@ def chat(user_input: str) -> str:
     return response.content
 ```
 
-### RunnableWithMessageHistory（自动管理）
+### RunnableWithMessageHistory（自动管理，多用户 Session）
 
 ```python
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -490,30 +633,49 @@ chain_with_history = RunnableWithMessageHistory(
     history_messages_key="history",
 )
 
-# 通过 configurable session_id 区分不同用户的会话
+# session_id 区分不同用户的对话（相同 id = 同一对话，共享历史）
 chain_with_history.invoke(
     {"question": "我叫张三"},
     config={"configurable": {"session_id": "user_001"}}
 )
 chain_with_history.invoke(
     {"question": "我叫什么名字？"},
-    config={"configurable": {"session_id": "user_001"}}  # 同一 session 能记住历史
+    config={"configurable": {"session_id": "user_001"}}   # 同一 session，能记住"张三"
 )
 ```
 
+### 记忆管理策略
+
+| 策略 | 做法 | 适用场景 |
+|------|------|---------|
+| 全量历史 | 每次带上所有消息 | 短对话，上下文不超出 token 限制 |
+| 滑动窗口 | 只保留最近 N 轮 | 长对话，控制 token 消耗 |
+| 摘要记忆 | 用模型把历史摘要成一段话，替换旧历史 | 超长对话，保留关键信息 |
+| 向量记忆 | 历史向量化存入向量库，按需检索相关历史 | 需要跨轮次语义检索 |
+
 ---
 
-## 十二、RAG（检索增强生成）
+## 十三、RAG（检索增强生成）
 
-RAG = **R**etrieval **A**ugmented **G**eneration，让模型基于你的私有文档回答问题。
+RAG = **R**etrieval **A**ugmented **G**eneration，让模型基于私有文档回答问题，解决"模型不知道你的私有数据"的问题。
 
-### 核心流程
+### 核心思路
 
 ```
+【离线构建阶段】
 原始文档 → 分块（Chunking）→ 向量化（Embedding）→ 存入向量数据库
-                                                           ↓
-用户提问 → 向量化 → 相似度检索（召回Top-K相关块）→ 拼入Prompt → 模型生成答案
+
+【在线查询阶段】
+用户提问 → 向量化 → 相似度检索（召回 Top-K 相关块）→ 拼入 Prompt → 模型生成答案
 ```
+
+### 为什么要分块？
+
+文档太长无法直接塞入 Prompt（token 限制），分块后只取最相关的块，精准且节省 token。
+
+**分块策略**：
+- `chunk_size`：每块的最大字符数（如 500）
+- `chunk_overlap`：相邻块重叠字符数（如 50），防止关键信息被切断
 
 ### 代码示例
 
@@ -522,79 +684,102 @@ from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain.chains import RetrievalQA
 
 # 1. 加载文档
 loader = TextLoader("document.txt", encoding="utf-8")
 docs = loader.load()
 
-# 2. 文档分块
+# 2. 分块
 splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 chunks = splitter.split_documents(docs)
 
-# 3. 向量化并存入向量数据库
+# 3. 向量化并存入向量数据库（Embedding 把文本变成数字数组，相似文本的向量距离近）
 embedding = OpenAIEmbeddings()
 vectorstore = Chroma.from_documents(chunks, embedding, persist_directory="./chroma_db")
 
-# 4. 构建检索链
-retriever = vectorstore.as_retriever(search_kwargs={"k": 3})  # 召回前3个最相关块
-qa_chain = RetrievalQA.from_chain_type(llm=model, retriever=retriever)
+# 4. 构建检索器
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})   # 召回最相关的前3块
 
-# 5. 问答
-answer = qa_chain.invoke({"query": "文档里说了什么？"})
-print(answer["result"])
+# 5. 手动 RAG 链
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "根据以下文档回答问题：\n\n{context}"),
+    ("human", "{question}")
+])
+
+chain = (
+    {"context": retriever, "question": RunnablePassthrough()}
+    | prompt
+    | model
+)
+answer = chain.invoke("文档里说了什么？")
 ```
+
+### Embedding 是什么
+
+把文本转换成**高维数字向量**的技术。语义相近的文本，向量在空间中的距离也近（余弦相似度高），这是相似度检索的数学基础。
 
 ---
 
-## 十三、MCP（Model Context Protocol）
+## 十四、MCP（Model Context Protocol）
 
-MCP 是 Anthropic 提出的开放协议，让 AI 应用能以标准化方式连接外部数据源和工具。
+MCP 是 Anthropic 提出的开放协议，让 AI 应用以**标准化方式**连接外部数据源和工具。
 
-**概念类比**：MCP 之于 AI 应用，就像 USB 之于硬件——统一接口，任意设备即插即用。
+**类比**：MCP 之于 AI 应用 = USB 之于硬件——统一接口，任意设备即插即用。
 
-### MCP vs LangChain Tools 对比
+### MCP vs LangChain Tools
 
 | 对比项 | LangChain Tools | MCP Tools |
 |--------|----------------|-----------|
-| 实现位置 | 在应用内部定义 | 独立服务（MCP Server）|
-| 跨应用复用 | 需要手动复制代码 | 任意 MCP 客户端都能调用 |
-| 生态 | LangChain 生态内 | 跨框架、跨语言 |
-| 适用场景 | 应用内部工具 | 需要共享的基础能力 |
+| 实现位置 | 在应用内部代码定义 | 独立进程（MCP Server） |
+| 跨应用复用 | 需要复制代码 | 任意 MCP 客户端都能调用 |
+| 生态范围 | LangChain 生态内 | 跨框架、跨语言 |
+| 适用场景 | 业务专属工具 | 基础能力共享（文件系统、数据库等）|
 
-### 在 LangChain 中使用 MCP 工具
+### 在 LangChain 中使用 MCP
 
 ```python
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-# 连接 MCP 服务器
 async with MultiServerMCPClient({
     "filesystem": {
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
         "transport": "stdio"
+    },
+    "web_search": {
+        "command": "python",
+        "args": ["-m", "mcp_web_search"],
+        "transport": "stdio"
     }
 }) as client:
-    tools = client.get_tools()           # 获取 MCP 服务器暴露的工具
-    model_with_tools = model.bind_tools(tools)  # 绑定到模型
-    response = await model_with_tools.ainvoke("列出当前目录的文件")
+    tools = client.get_tools()                      # 获取所有 MCP Server 暴露的工具
+    agent = create_react_agent(model, tools=tools)  # 绑定到 Agent
+    result = await agent.ainvoke({"messages": [HumanMessage("列出当前目录的文件")]})
 ```
 
 ---
 
-## 十四、关键概念速查
+## 十五、关键概念速查
 
-| 概念 | 说明 |
-|------|------|
+| 概念 | 一句话说明 |
+|------|-----------|
 | `ChatModel` | 接受消息列表，返回 AIMessage 的模型接口 |
-| `Runnable` | LangChain 所有组件的基类，支持 invoke/stream/batch |
+| `Runnable` | LangChain 所有组件的基类，支持 invoke/stream/batch/ainvoke |
 | `LCEL` | 用 `\|` 把 Runnable 串联成链的语法 |
-| `ChatPromptTemplate` | 带变量占位符的提示词模板 |
-| `MessagesPlaceholder` | 在模板中插入消息列表的占位符 |
-| `tool` | 装饰器，把函数变成模型可调用的工具 |
-| `with_structured_output` | 让模型按 Pydantic schema 输出结构化数据 |
-| `AgentExecutor` | 执行 Agent 循环（模型 → 工具 → 模型 → ...）的运行器 |
-| `RAG` | 检索增强生成，让模型基于私有文档回答 |
-| `Embedding` | 把文本转换为向量（数字数组），用于相似度检索 |
-| `Vector Store` | 存储和检索向量的数据库（Chroma、Pinecone、FAISS等）|
-| `MCP` | 标准化工具协议，让 AI 应用跨框架复用工具 |
+| `ChatPromptTemplate` | 带变量占位符的提示词模板，from_messages 创建 |
+| `MessagesPlaceholder` | 在模板中插入动态消息列表的占位符（用于历史） |
+| `@tool` | 装饰器，把普通函数变成模型可调用的工具 |
+| `tool_calls` | AIMessage 的字段，模型表达"想调用哪个工具"的意图（不是真执行）|
+| `ToolMessage` | 工具执行结果，必须包含 tool_call_id 与 tool_calls 对应 |
+| `with_structured_output` | 让模型按 Pydantic schema 返回结构化对象 |
+| `create_react_agent` | LangGraph 创建 ReAct Agent 的工厂函数 |
+| `stream_mode` | 控制 Agent 流式输出的粒度（updates/values/messages 等）|
+| `pre_model_hook` | Agent 调用模型前触发的钩子函数（中间件）|
+| `RAG` | 检索增强生成，给模型挂载私有文档知识库 |
+| `Embedding` | 把文本转成数字向量，语义相近则向量相近 |
+| `Vector Store` | 存储和检索向量的数据库（Chroma、FAISS、Pinecone 等）|
+| `MCP` | 标准化工具协议，让工具跨框架、跨语言复用 |
+| `LangSmith` | LangChain 官方调用追踪平台，记录每次调用的 IO 和 token |
