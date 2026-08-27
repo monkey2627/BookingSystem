@@ -98,9 +98,44 @@ Returns:
     * 案例：
 * tool_choice:配置是否强制大模型调用工具，auto，required，none，具体的方法
 * 实践经验：清晰的描述，功能单一，处理工具失败，最好直接返回字符串，同步和异步
+### 有很多内置的工具，可以直接用
 # 结构化输出
-
+## Pydantic结构化
+class a(BaseModel):
+    """
+      工具的描述
+    """
+## TypedDisct
+## JSON Schema
+## 数据类
 # 智能体
+* 统一为create_agent(),将大模型、工具、prompt等传入，来创建一个智能体
+* 模型的传入方式：1.传入一个字符串，类似之前模型的创建，注意要加load_dovenv2.直接先创建一个模型，然后传入模型实例
+* 调用：agent.invoke(),传入的是消息列表，返回的也是字典包含的消息列表，和模型调用好像是一样的
+例子：
+* 绑定工具：静态 or 借助中间件动态
+* 1.静态：创建的时候传入tools=[ , , ,]
+## 工具调用流程分析
+ReAct结构 思考-行动-观察
+* 设置agent名字：传入name=
+## 结构化输出
+1.ProviderStrategy原生的结构化输出
+2.ToolStrategy不支持原生结构化输出的模型，相当于创建一个虚拟工具，这个工具引导模型产生对应结构的输出
+### ToolStrategy详解
+三个参数:schema：对应之前讲的四种结构化输出，表明用哪一种；Union(),提供多个结构化类，对应不同的问题可以选用
+tool_message_content:设置显示在ToolMessage中content上的数据，因为实际的大模型使用的数据其实不依靠contnt，可以节省token
+handle_errors：默认为true，捕获所有异常，false：关闭自动重试，直接抛出异常
+设定为指定异常类型：捕获这种异常，有：multiplestructuredoutputserror，structuredoutputvalidationerror
+设定为指定的错误处理函数：直接把函数给handle_errors参数
+设定为自定义字符串：
+## 流式输出及模式
+agent.stream()调用，stream_mode参数控制
+values：每步都会输出完整的状态信息等
+updates：默认使用，只增量更新状态中发生变化的内容
+messages：会输出流式返回的token已经相关的元数据
+tasks：输出当前任务开始时间，结束时间等
+debug:
+custom:
 # 中间件
 # 上下文与记忆
 # RAG
