@@ -86,6 +86,19 @@ public interface Collection<E> extends Iterable<E> {
 }
 ```
 
+**`contains` 的范围与性能**：`contains(Object o)` 定义在 Collection 接口，所有 List、Set、Queue/Deque 实现类都有。**Map 不继承 Collection，没有 `contains`，替代方法是 `containsKey` 和 `containsValue`**。各实现类的复杂度差异很大：
+
+| 集合 | contains 复杂度 | 原因 |
+|------|---------------|------|
+| ArrayList / LinkedList | O(n) | 线性扫描 |
+| HashSet | O(1) | 哈希查找 |
+| TreeSet | O(log n) | 红黑树 |
+| ArrayDeque / PriorityQueue | O(n) | 线性扫描 |
+| HashMap.containsKey | O(1) | 哈希查找 |
+| HashMap.containsValue | O(n) | 全量扫描 value |
+
+**实践原则：频繁判断元素是否存在，用 `HashSet`，不要用 `List`。**
+
 ### List
 
 有序（按插入顺序），允许重复，允许 null。额外定义了按索引操作的方法：
@@ -1152,13 +1165,157 @@ for (String s : list) {
 | BlockingQueue 的 put 和 offer 区别 | put 满了阻塞；offer 满了返回 false（可加超时参数）|
 | ConcurrentHashMap size() 为何不准确 | 计数用 CounterCell 分散，size() 是 baseCount + Σcells，高并发下有竞态 |
 | 跳表的优势 | 有序 + 并发友好（无锁 CAS），比加锁的 TreeMap 并发性能好 |
-## 十二、实战：LRU Cache 手写（LeetCode 146）
+## 十二、集合间互转
+
+大多数集合构造器都接受 `Collection<? extends E>` 参数，所以 List、Set、Queue/Deque 之间基本可以直接互转。Map 不继承 Collection，需要额外处理。
+
+### List ↔ Set
+
+```java
+List<String> list = List.of("a", "b", "a", "c");
+
+// List → HashSet（去重，无序）
+Set<String> set = new HashSet<>(list);
+
+// List → LinkedHashSet（去重，保留插入顺序）
+Set<String> set = new LinkedHashSet<>(list);
+
+// List → TreeSet（去重，自然排序）
+Set<String> set = new TreeSet<>(list);   // 元素须实现 Comparable
+
+// Set → ArrayList
+List<String> list = new ArrayList<>(set);
+
+// Set → LinkedList
+List<String> list = new LinkedList<>(set);
+```
+
+**注意**：List 转 Set 会丢失重复元素；Set 转 List 顺序取决于原 Set 类型。
+
+### List / Set ↔ Queue / Deque
+
+```java
+List<Integer> list = List.of(1, 2, 3);
+
+// List → ArrayDeque
+Deque<Integer> deque = new ArrayDeque<>(list);
+
+// List → PriorityQueue（自动建堆，O(n)）
+Queue<Integer> pq = new PriorityQueue<>(list);
+
+// ArrayDeque → ArrayList
+List<Integer> list = new ArrayList<>(deque);
+```
+
+### 数组 ↔ List
+
+```java
+String[] arr = {"a", "b", "c"};
+
+// 数组 → List（固定大小，不能 add/remove，但可以 set）
+List<String> fixed = Arrays.asList(arr);
+fixed.add("d");        // 抛 UnsupportedOperationException
+fixed.set(0, "X");     // OK
+
+// 数组 → 可变 List
+List<String> mutable = new ArrayList<>(Arrays.asList(arr));
+
+// Java 9+ 简写（不可变）
+List<String> immutable = List.of(arr);
+
+// List → 数组
+String[] arr = list.toArray(new String[0]);
+// toArray() 无参返回 Object[]，无法直接强转为 String[]，必须传类型
+Object[] objArr = list.toArray();   // OK 但类型是 Object[]
+```
+
+**`Arrays.asList` 的三个坑**：
+
+```java
+// 坑1：返回的是固定大小 List，add/remove 抛异常
+List<String> list = Arrays.asList("a", "b");
+list.add("c");   // UnsupportedOperationException
+
+// 坑2：修改原数组会影响 List（共享底层数组）
+String[] arr = {"a", "b"};
+List<String> list = Arrays.asList(arr);
+arr[0] = "X";
+System.out.println(list.get(0));   // "X"
+
+// 坑3：基本类型数组不能直接用，会整体当一个元素
+int[] ints = {1, 2, 3};
+List list = Arrays.asList(ints);   // List<int[]>，只有一个元素！
+// 正确做法：
+List<Integer> list = Arrays.stream(ints).boxed().collect(Collectors.toList());
+```
+
+### Collection ↔ Map
+
+集合和 Map 没有直接互转方法，需要 Stream 或手动处理：
+
+```java
+// List → Map（以元素本身为 key，配对某个值）
+List<String> list = List.of("apple", "banana", "cherry");
+Map<String, Integer> map = list.stream()
+    .collect(Collectors.toMap(s -> s, String::length));
+// {"apple"=5, "banana"=6, "cherry"=6}
+
+// List<对象> → Map（常用：id 作 key）
+Map<Long, User> userMap = users.stream()
+    .collect(Collectors.toMap(User::getId, u -> u));
+
+// Map.keySet() → Set（视图，不可独立修改）
+Set<String> keys = map.keySet();
+
+// Map.values() → Collection（视图）
+Collection<Integer> values = map.values();
+
+// Map.entrySet() → Set<Map.Entry>
+Set<Map.Entry<String, Integer>> entries = map.entrySet();
+
+// Map → List（key 列表或 value 列表）
+List<String> keyList = new ArrayList<>(map.keySet());
+List<Integer> valueList = new ArrayList<>(map.values());
+```
+
+### 不可变集合
+
+```java
+// Java 9+ 工厂方法，创建不可变集合
+List<String> list = List.of("a", "b", "c");
+Set<String> set = Set.of("a", "b", "c");
+Map<String, Integer> map = Map.of("a", 1, "b", 2);
+
+// 任何修改都抛 UnsupportedOperationException
+list.add("d");   // 抛异常
+
+// Collections 工具类包装（视图，不可变但元素本身可变）
+List<String> unmodifiable = Collections.unmodifiableList(mutableList);
+```
+
+### 互转速查表
+
+| 目标类型 | 写法 | 注意 |
+|---------|------|------|
+| `ArrayList` | `new ArrayList<>(collection)` | 通用，任何 Collection 都行 |
+| `HashSet` | `new HashSet<>(collection)` | 自动去重 |
+| `LinkedHashSet` | `new LinkedHashSet<>(collection)` | 去重且保顺序 |
+| `TreeSet` | `new TreeSet<>(collection)` | 去重且排序，元素须 Comparable |
+| `ArrayDeque` | `new ArrayDeque<>(collection)` | 通用 |
+| `PriorityQueue` | `new PriorityQueue<>(collection)` | 自动堆化 |
+| `数组` | `list.toArray(new T[0])` | 必须传类型参数 |
+| `可变 List` | `new ArrayList<>(Arrays.asList(arr))` | 不要直接用 Arrays.asList |
+| `Map` | `stream().collect(Collectors.toMap(...))` | 需指定 key/value 映射函数 |
+
+---
+
+## 十三、实战：LRU Cache 手写（LeetCode 146）
 
 LRU（Least Recently Used）缓存是集合框架知识的综合应用，考察 LinkedHashMap 原理 + 双向链表操作 + API 细节。
 
 ---
 
-### 12.1 核心数据结构选择
+### 13.1 核心数据结构选择
 
 **目标**：get/put 都是 O(1)，且能快速定位"最久未使用"的 key。
 
@@ -1175,7 +1332,7 @@ put 已有 key → 更新值，移到队尾
 
 ---
 
-### 12.2 常见 API 陷阱（重要）
+### 13.2 常见 API 陷阱（重要）
 
 **陷阱 1：`List.get(x)` 参数是下标，不是元素值**
 
@@ -1245,7 +1402,7 @@ public int get(int key) {
 
 ---
 
-### 12.3 O(n) 版本：LinkedList + HashMap（理解思路，会超时）
+### 13.3 O(n) 版本：LinkedList + HashMap（理解思路，会超时）
 
 用 LinkedList 作时序队列，逻辑清晰但 `remove(Object)` 是 O(n)，大数据用例会超时。**仅用来验证思路，面试不能写这个。**
 
@@ -1292,7 +1449,7 @@ class LRUCache {
 
 ---
 
-### 12.4 O(1) 版本：自定义双向链表 + HashMap（面试标准写法）
+### 13.4 O(1) 版本：自定义双向链表 + HashMap（面试标准写法）
 
 HashMap 存 `key → Node`，通过 Node 引用 O(1) 定位链表节点。用虚拟头尾节点（dummy）简化边界处理。
 
@@ -1372,7 +1529,7 @@ class LRUCache {
 
 ---
 
-### 12.5 JDK 内置方案：LinkedHashMap（生产代码可用）
+### 13.5 JDK 内置方案：LinkedHashMap（生产代码可用）
 
 ```java
 class LRUCache extends LinkedHashMap<Integer, Integer> {
@@ -1402,7 +1559,7 @@ class LRUCache extends LinkedHashMap<Integer, Integer> {
 
 ---
 
-### 12.6 踩坑总结
+### 13.6 踩坑总结
 
 > `get(index)` 语义、`remove(int)` 重载、`List` 接口 vs `LinkedList` 声明这三条已整理到**三、List 实现类**对应章节。
 
