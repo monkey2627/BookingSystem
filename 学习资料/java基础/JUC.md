@@ -1,268 +1,577 @@
-# 加锁
-## synchronizied
-### 原理
-* 管程
-### 使用
-### 行为特性
-## park()/unpark()
-# 无锁
-* 创造一个atomicinteger，在外面使用的时候
-* 先获取再得到要修改的，最后真正修改，使用CAS：比较并设置
-* 为了保证每次得到的是最新数据，要结合volatile
-* 适用线程数少，多核cpu，体现的是乐观锁：不上锁，重试
-* 无锁并发
-## CAS的工具类
-### 原子整数
-AtomicBoolean、AtomicInteger ，AtomicLong
-### 原子引用
-AutomicReference<T>,创造的时候要传入包装类
-* 问题，只能判断和初值是否相同，不能感知到中间确实有过修改，增加版本号
-* markable：只关心是否被改变，所以引入一个标记，只关心标记的false或者true
-### 原子数组
-* 多线程下数组是不安全的，引入atomicintegerarray
-* 要保护的类型是数组，和原子引用的区别是数组还要再包装一层，原子引用无法保护更下一层
-### 字段更新器
-* 针对对象的某个字段进行原子操作，这个字段必须被volatile所修饰 
-* 创造的时候就指定类、字段类、字段名
-### 原子累加器
-* 专门用来做累加的类,LongAddr(),设置多个累加单元，最后将核心汇总
-#### 源码
-* 累加单元数组
-* 基础值
-* cellsbusy：cells创建或者扩容时用来枷锁
-* cas锁
-* 缓存行：缓存以缓存行为单位，每个缓存行对应着一块内存，一般是64byte
-* 如果cpu是多核心的，如果某个cpu核心更改了数据，那么其他cpu核心所对应的整个缓存
-* 行必须失效，这样才能保持数据的一致性
-* sun.misc.contended用来解决伪共享
-#### unsafe对象
+# Java 并发编程（JUC）
 
-# 不可变
-## 不可变的设计
-### string和包装类、BIgDecimal
-* final：在赋值之后会加入一个写屏障，也可以保证可见性，读取有优化
-* 保护性拷贝---创造对象太多，为了解决这个问题引入享元模式
-* 享元模式：用于重用对象，包装类、字符串常量池，连接池
-* 无状态：没有任何的成员变量，也就是没有线程安全问题
-# 并发工具
-## 线程
-* 常用方法 runnable thread callable future的区别和联系是什么？有点混
-# Runnable / Thread / Callable / Future 区别与联系
+---
 
->
-> 核心记忆：
+## 一、线程基础：Thread / Runnable / Callable / Future
 
-1. **Thread 是线程类**；
-2. **Runnable 无返回值、无异常抛出**；
-3. **Callable 有返回值、可以抛异常**；
-4. **Future 用来接收 Callable 的执行结果**。
+### 1. 核心定义
 
-## 1. 接口/类定义
+**Thread（类）**
 
-### ① Thread（类）
-
-```
+```java
 public class Thread implements Runnable
 ```
 
-- **是类，不是接口**，继承 `Object`，实现了 `Runnable`。
-- 真正代表操作系统线程对象，调用 `start()` 开启新线程；`run()` 只是普通方法。
-- 两种用法：
-    1. 继承 Thread，重写 `run()`
-    2. 构造传入 Runnable 对象 `new Thread(runnable).start()`
+- 真正代表操作系统线程的对象，调用 `start()` 开启新线程；直接调用 `run()` 只是普通方法，不会新建线程。
+- 两种用法：继承 Thread 重写 `run()`；或构造时传入 Runnable 对象。
 
->
-> ⚠️重点：`run()` 直接调用只是普通方法，**不会新开线程；必须调用 `start()` 才会创建操作系统线程**。
+**Runnable（接口，JDK 1.0）**
 
-### ② Runnable（接口，JDK1.0）
-
-```
+```java
 @FunctionalInterface
 public interface Runnable {
-    void run();
+    void run();  // 无返回值，不能抛受检异常
 }
 ```
 
-- 函数式接口，**无返回值，run 不能抛出受检异常**。
-- 作用：封装**线程要执行的业务逻辑**，和线程对象 Thread 解耦。
-- 使用：传给 Thread 构造器，或者线程池执行 `executor.execute(runnable)`。
+封装线程要执行的业务逻辑，与 Thread 解耦。可传给 `Thread` 构造器或线程池 `execute()`。
 
-### ③ Callable（接口，JDK1.5）
+**Callable（接口，JDK 1.5）**
 
-```
+```java
 @FunctionalInterface
 public interface Callable<V> {
-    V call() throws Exception;
+    V call() throws Exception;  // 有泛型返回值，可以抛受检异常
 }
 ```
 
-- 函数式接口，**有泛型返回值V，call()允许抛出异常**。
-- 专门解决 Runnable 的痛点：不能拿返回值、不能抛出异常。
-- **不能直接丢给 Thread**！Thread 构造器不接收 Callable。
+解决 Runnable 不能拿返回值、不能抛异常的痛点。**不能直接传给 Thread**，需要用 FutureTask 包装。
 
-### ④ Future（接口，JDK1.5）
+**Future（接口，JDK 1.5）**
 
-```
+```java
 public interface Future<V> {
-    V get() throws InterruptedException, ExecutionException;
-    V get(long timeout, TimeUnit unit);
+    V get() throws InterruptedException, ExecutionException;  // 阻塞等待结果
+    V get(long timeout, TimeUnit unit);  // 带超时的等待
     boolean cancel(boolean mayInterruptIfRunning);
     boolean isCancelled();
     boolean isDone();
 }
 ```
 
-- Future 代表**异步任务的结果凭证**。
-- `get()`阻塞等待获取Callable返回结果；任务出错会把异常包装成`ExecutionException`抛出。
-- 常用实现类：`FutureTask`。
+代表异步任务的结果凭证，`get()` 阻塞直到任务完成，任务出错时将异常包装成 `ExecutionException` 抛出。
 
-## 2. FutureTask 桥梁（非常关键）
-
-`FutureTask implements RunnableFuture<V>`，而 `RunnableFuture` 同时继承 `Runnable` + `Future`。
+### 2. FutureTask — 连接 Callable 与 Thread 的桥梁
 
 ```
 FutureTask → RunnableFuture → Runnable, Future
 ```
 
-- FutureTask 包装 Callable，既可以传给 Thread，又可以拿到 Future 的结果。
+FutureTask 同时实现了 Runnable（可传给 Thread）和 Future（可获取结果），是使用 Callable 的标准方式：
 
-```
-Callable<Integer> callable = ()->{return 100;};
+```java
+Callable<Integer> callable = () -> 100;
 FutureTask<Integer> task = new FutureTask<>(callable);
-new Thread(task).start(); // 当作Runnable传给Thread
-Integer res = task.get(); // 当作Future拿返回值
+new Thread(task).start();    // 当作 Runnable 传给 Thread
+Integer result = task.get(); // 当作 Future 拿返回值（阻塞）
 ```
 
->
-> 线程池 `submit(callable)` 底层就是帮你封装成 FutureTask，返回 Future 对象。
+线程池 `submit(callable)` 底层也是帮你封装成 FutureTask 并返回 Future 对象。
 
-## 3. 四者对比表
+### 3. 四者对比
 
-| 类型 | 类型 | 方法 | 返回值 | 异常 | 能否直接给Thread |
-| --- | --- | --- | --- | --- | --- |
-| Thread | class | start() / run() | void | - | ✅本身就是线程 |
-| Runnable | interface | run() | void | 不能抛受检异常 | ✅ |
-| Callable | interface | call() | V泛型返回 | 可throws Exception | ❌，需要FutureTask包装 |
-| Future | interface | get()/cancel() | V | get会抛异常 | ❌，存结果 |
+| 类型 | 类型 | 核心方法 | 返回值 | 能抛受检异常 | 能直接给 Thread |
+|------|------|----------|--------|-------------|----------------|
+| Thread | class | start() / run() | void | - | 本身就是线程 |
+| Runnable | interface | run() | void | 否 | 是 |
+| Callable | interface | call() | V（泛型） | 是 | 否（需 FutureTask）|
+| Future | interface | get() / cancel() | V | get() 会抛 | 否（存结果） |
 
-## 4. 联系梳理
+### 4. 线程池提交方式
 
-1. **Thread 负责线程调度，Runnable/Callable 负责业务逻辑**
-    - Thread 是“工人”，Runnable/Callable 是“要干的活”。
-2. Runnable：无返回任务；Callable：需要返回值的任务。
-3. Callable不能直接给Thread，**必须套一层FutureTask（同时实现Runnable+Future）**。
-4. Future 只是结果的契约，FutureTask是它最重要实现。
-5. 线程池：
-    - `execute(Runnable)`：无返回
-    - `submit(Runnable)` → 返回Future
-    - `submit(Callable)` → 返回Future
-
-### submit(Runnable)小细节
-
-submit也可以传Runnable，返回Future，但是get()会返回null；
-如果想要Runnable也有返回值，可以用重载 `submit(Runnable, T result)`，get返回传入的result。
-
-## 5. 常见易错点
-
-1. ❌调用`thread.run()`，不会新建线程，只是普通方法执行；必须`start()`。
-2. ❌直接 new Thread(callable) 编译报错，Callable不是Runnable。
-3. ❌`future.get()`会阻塞，如果任务没完成，会卡住线程，要注意超时。
-4. Runnable.run不能throws异常，只能内部try‑catch；Callable.call可以throws Exception。
-
-## 6. 代码示例汇总
-
-```
-//1.继承Thread
-class MyThread extends Thread{
-    @Override
-    public void run() {}
-}
-new MyThread().start();
-
-//2.Runnable
-Runnable r = ()->{};
-new Thread(r).start();
-
-//3.Callable + FutureTask
-Callable<Integer> c = ()->{
-    return 666;
-};
-FutureTask<Integer> ft = new FutureTask<>(c);
-new Thread(ft).start();
-Integer val = ft.get(); //阻塞拿结果
+```java
+executor.execute(runnable);        // 无返回值
+Future<?> f1 = executor.submit(runnable);         // Future.get() 返回 null
+Future<T>  f2 = executor.submit(callable);         // Future.get() 返回结果
+Future<T>  f3 = executor.submit(runnable, result); // Future.get() 返回传入的 result
 ```
 
-如果你需要，我可以再帮你整理面试背诵版极简口诀。
-## 线程池
-### 大概逻辑（不完全一样，需根据源码改）
-* 线程池+阻塞队列(还没有获得线程的任务阻塞在这里)
-  * 阻塞队列：任务队列，锁lock(获取线程时需要对队列加锁，保证安全性），生产者条件变量lock.newCondition、消费者条件变量
-  容量。方法包括：阻塞获取，阻塞添加,超时添加(超过超时时间会失败)
-  加锁：lock.lock(),唤醒某个condition上等待的线程condition.signal()，在某个条件上等待condition.await()(我不太清楚这个会不会放弃cpu)
-  有限时间等待 condition.awaitNanos(time)，有一个虚假唤醒的问题需要解决。什么是虚假唤醒？怎么解决？
-  * 线程池：阻塞队列taskQueue+阻塞队列的容量上限+线程集合(workers集合)+线程数+获取任务的超时时间
-    * 线程worker:任务+run():task不为空的时候执行任务，task执行完毕就从taskQueue中取一个新任务run
-拒绝策略：线程池中的阻塞队列满了的时候，需要根据自己定义的拒绝策略来选择如何处理，一般来说拒绝策略是一个抽象接口
-    * 可以有很多种不同的实现，比如死等、带超时的等待，让调用者放弃任务执行，让调用者抛出异常，让调用者自己执行
-### jdk的线程池实现
-![img.png](img.png)
-#### ThreadPoolExecutor
-* 用一个int的高三位表示线程池的状态（五种），低29位标识线程数量
-* 构造方法及其参数
-![img_1.png](img_1.png)
-* 核心线程和救急线程，救急线程有生存时间，核心线程一直保留在线程池中
-* 拒绝策略的实现![img_2.png](img_2.png)
-* 线程工厂，可以不传就用默认的，也可以自定义
-#### 工厂方法（根据构造方法创建不同的线程池）
-* newFixedRhreadPool：没有救急线程，阻塞队列无界，容量创建时指定，但后续还能修改
-* newCachedThreadPool全部是救急，阻塞队列是synchronousQueue，没有容量，只有线程来取才能放进去
-* singleThreadExecutor线程数固定为1，阻塞队列无界，适用于希望多个任务排队执行，优点是就算那个单线程出错了也能再创建出来一个，但是这个为1的容量无法修改
-* scheduledthreadpool：schedualAtFixedRate(),按顺序执行，任务执行的时间长短，没到会补全但是超了不管，传入的任务一直循环执行
-                        schedualWithFiedDelay():固定每个任务的间隔时间，可以用来实现定时任务，即固定在哪个时间触发
-* ![img_6.png](img_6.png)
-#### 提交任务
-![img_3.png](img_3.png)
-##### submit
-* 提交一个有返回值的任务： Future<T> future = pool.submit(Callable<T>)
-* future使用保护式暂停，什么是保护式暂停？
-##### invokeAll()
-提交多个任务，传入一个任务集合
-#### 关闭线程池
-* shutdown：不会接受新任务，但是已经提交的任务会执行完
-* shutdownnow：正在执行的任务会被打断
-![img_4.png](img_4.png)
-#### 正确处理线程异常
-1.用try-catch
-2.用future配合callable
-### 异步模式-工作线程
-* 有限的线程处理无限的任务
-* 饥饿：所有线程都在等待相同的资源--->不同的任务类型应该使用不同的线程池
-* 创建多少线程池合适：1.cpu密集运算2.io密集运算![img_5.png](img_5.png)
-### tomcat里面的线程池
-见学习资料\SpringBoot_Web相关\tomcat.md
-## ForkJoin线程池
-* 多线程分治，适用于能够进行任务拆分的cpu密集型计算
-* pool=ForkJoinPool
-* task任务必须继承自RecursiveTask或者RecursiveAction,需要重写compute方法，自己设计拆分逻辑
-* ![img_7.png](img_7.png)
-* pool.invoke(task)
-# JUC java中实现的各种
-## AQS
-* 阻塞式锁和相关同步器工具的框架(即规范)，实际上就是个接口
-* 用state来表示资源的状态
-* 提供了fifo的等待队列，类似管程的entrylist
-* 条件变量来实现等待、唤醒机制，类似管程的waitset
-* java中实现的锁实现Lock接口，同步器类实现AQS接口，锁中应当有同步器类(?不知道我的理解是否正确)
-## reentrantLock
-### 使用
+### 5. 常见易错点
+
+- `thread.run()` 不开新线程，必须用 `start()`。
+- `new Thread(callable)` 编译报错，Callable 不是 Runnable。
+- `future.get()` 会阻塞当前线程，注意设超时避免死锁。
+- Runnable 的 run() 不能 throws 异常，只能内部 try-catch；Callable 的 call() 可以 throws Exception。
+
+---
+
+## 二、synchronized 关键字
+
+### 原理：管程（Monitor）
+
+synchronized 的底层实现基于 **管程（Monitor）** 模型。每个 Java 对象都天然关联一个监视器锁（Monitor）：
+
+- **EntryList（入口集）**：等待获取锁的线程在此阻塞
+- **WaitSet（等待集）**：调用 `wait()` 后进入等待的线程
+- **Owner**：当前持有锁的线程（只能有一个）
+
+字节码层面：同步方法块使用 `monitorenter` / `monitorexit` 指令；同步方法用 `ACC_SYNCHRONIZED` 标志。
+
+### 使用方式
+
+```java
+// 1. 修饰实例方法：锁 this（当前对象）
+public synchronized void method() { ... }
+
+// 2. 修饰静态方法：锁 Class 对象
+public static synchronized void staticMethod() { ... }
+
+// 3. 修饰代码块：锁指定对象
+synchronized (lockObject) { ... }
+```
 
 ### 行为特性
 
-### 实现原理
-#### 非公平锁
-* nonfairSync继承自AQS
-* 结构是state，head，tail，exclusiveownerthread
-* 有竞争出现时(有别的线程也想要锁)，添加在队列中循环重试，每次失败都会用park()阻塞
-* 队列是双向链表，每一个等待的线程都有义务唤醒其后继节点
-* 非公平的意思是如果有新的线程来恰好得到了锁，被唤醒的节点有可能竞争失败
-#### 可重入
+| 特性 | 说明 |
+|------|------|
+| **互斥** | 同一时刻只有一个线程能持有同一把锁 |
+| **可重入** | 同一线程可以反复获取同一把锁（不会自己死锁），底层通过计数器实现 |
+| **内存可见性** | 解锁时强制将修改刷回主存；加锁时从主存重新读取，保证可见性 |
+| **不可中断** | 等待锁的线程无法被中断（区别于 ReentrantLock） |
+
+### 锁升级（JDK 6+ 优化）
+
+为减少重量级锁的开销，JVM 引入了锁升级机制：
+
+```
+无锁 → 偏向锁（同一线程反复获取，无 CAS） → 轻量级锁（多线程交替获取，CAS 自旋） → 重量级锁（有竞争，进入 OS 阻塞）
+```
+
+---
+
+## 三、park() / unpark() 与 LockSupport
+
+`LockSupport` 是 JDK 提供的线程阻塞工具类，比 `wait/notify` 更灵活：
+
+```java
+// 暂停当前线程（消耗一个"许可"，若无许可则阻塞）
+LockSupport.park();
+
+// 恢复指定线程（发放一个"许可"）
+LockSupport.unpark(thread);
+```
+
+**与 wait/notify 的核心区别：**
+
+| 对比点 | wait/notify | park/unpark |
+|--------|-------------|-------------|
+| 必须持有锁 | 必须在 synchronized 内 | 不需要持有任何锁 |
+| 调用顺序 | notify 必须在 wait 之前调用才有效 | unpark 可先于 park 调用（许可提前发放） |
+| 精确唤醒 | notify 随机唤醒一个 | unpark 指定线程唤醒 |
+
+底层基于 `Unsafe.park()` / `Unsafe.unpark()`，AQS 的阻塞/唤醒逻辑均使用此机制实现。
+
+---
+
+## 四、volatile 关键字
+
+volatile 提供两种保证：
+
+**1. 可见性**：对 volatile 变量的写操作立即刷新到主存，读操作直接从主存读取，避免 CPU 缓存导致的可见性问题。
+
+**2. 有序性（禁止指令重排）**：通过内存屏障（Memory Barrier）禁止编译器/CPU 对 volatile 变量读写前后的指令进行重排序。
+
+```java
+// 经典：双重检查单例模式
+class Singleton {
+    private static volatile Singleton instance;  // 必须加 volatile
+
+    public static Singleton getInstance() {
+        if (instance == null) {                   // 第一次检查（不加锁）
+            synchronized (Singleton.class) {
+                if (instance == null) {           // 第二次检查（加锁后）
+                    instance = new Singleton();   // 若无 volatile，new 可能被重排
+                }
+            }
+        }
+        return instance;
+    }
+}
+```
+
+**volatile 不保证原子性**：`i++` 是三步操作（读→加→写），volatile 无法保证这三步的整体原子性，需要用原子类或 synchronized。
+
+---
+
+## 五、CAS 与原子类
+
+### CAS（Compare And Swap，比较并交换）
+
+CAS 是实现无锁并发的核心操作，包含三个参数：
+
+- **内存位置 V**：要修改的变量地址
+- **期望值 A**：认为当前值应该是什么
+- **新值 B**：要设置的新值
+
+逻辑：若 V 的当前值等于 A，则将 V 设置为 B，返回成功；否则不修改，返回失败，由调用方决定是否重试。
+
+底层依赖 CPU 指令（x86 的 `cmpxchg`），是真正意义上的原子操作，不需要操作系统介入。
+
+**适用场景**：线程数少、竞争不激烈、多核 CPU，体现乐观锁思想（不上锁，失败就重试）。
+
+**ABA 问题**：变量从 A 改成 B 又改回 A，CAS 无法感知中间发生过修改。解决方案：引入版本号（`AtomicStampedReference`）或标记（`AtomicMarkableReference`）。
+
+### 原子整数
+
+`AtomicBoolean`、`AtomicInteger`、`AtomicLong` — 对单个基本类型值进行原子操作：
+
+```java
+AtomicInteger ai = new AtomicInteger(0);
+ai.incrementAndGet();           // 原子 +1，返回新值
+ai.getAndAdd(5);                // 原子 +5，返回旧值
+ai.compareAndSet(0, 100);       // CAS：期望 0，设为 100
+```
+
+内部结合 `volatile` + `CAS` 实现：volatile 保证读取最新值，CAS 保证修改的原子性。
+
+### 原子引用
+
+`AtomicReference<T>` — 对对象引用进行原子操作：
+
+```java
+AtomicReference<String> ref = new AtomicReference<>("hello");
+ref.compareAndSet("hello", "world");  // 期望是 "hello" 才替换
+```
+
+存在 ABA 问题，用 `AtomicStampedReference<T>` 解决（带版本号）：
+
+```java
+AtomicStampedReference<String> stampedRef =
+    new AtomicStampedReference<>("v1", 0);  // 初始值 + 初始版本号
+int[] stampHolder = new int[1];
+String current = stampedRef.get(stampHolder);  // 同时获取值和版本号
+stampedRef.compareAndSet(current, "v2", stampHolder[0], stampHolder[0] + 1);
+```
+
+`AtomicMarkableReference<T>` 只关心是否被修改过（用 boolean 标记代替版本号）。
+
+### 原子数组
+
+`AtomicIntegerArray`、`AtomicLongArray`、`AtomicReferenceArray<T>` — 对数组中单个元素进行原子操作（区别于 AtomicReference，它保护的是数组内元素，而非数组引用本身）。
+
+### 字段更新器
+
+`AtomicIntegerFieldUpdater`、`AtomicLongFieldUpdater`、`AtomicReferenceFieldUpdater` — 对已有类的某个字段进行原子操作，无需改动原类：
+
+```java
+// 要求：字段必须用 volatile 修饰，且 public（或在同包内）
+AtomicIntegerFieldUpdater<User> updater =
+    AtomicIntegerFieldUpdater.newUpdater(User.class, "score");
+updater.incrementAndGet(userInstance);  // 原子更新 userInstance.score
+```
+
+### 原子累加器 LongAdder
+
+专门用于高并发累加场景，性能比 `AtomicLong` 高得多：
+
+**LongAdder 原理**：内部维护一个 `base` 值和多个 `Cell` 累加单元（数组）。低竞争时直接 CAS 更新 base；高竞争时分散到不同 Cell（每个线程哈希到不同 Cell 上），最终 `sum()` = base + ΣCell。
+
+**伪共享问题**：多个 Cell 可能落在同一个 CPU 缓存行（64 字节）上，一个核修改会导致其他核的整行缓存失效，降低性能。`@sun.misc.Contended` 注解通过填充字节让每个 Cell 独占一条缓存行，解决伪共享。
+
+```java
+LongAdder adder = new LongAdder();
+adder.increment();   // 原子 +1
+adder.add(5);        // 原子 +5
+long total = adder.sum();  // 汇总所有 Cell（非原子，并发时可能不精确）
+```
+
+---
+
+## 六、不可变与线程安全
+
+### 不可变设计
+
+`String`、基本类型包装类（`Integer`、`Long` 等）、`BigDecimal` 等设计为不可变类。不可变类天然线程安全，无需同步。
+
+**实现要点：**
+- 类声明 `final`：防止子类覆盖方法破坏不可变约束
+- 字段声明 `final`：赋值后引用不可替换，同时 `final` 写入会插入写屏障，保证可见性
+- 修改操作返回新对象，不修改原对象
+
+### 享元模式
+
+不可变对象频繁创建会产生大量垃圾，享元模式（Flyweight）通过对象复用减少内存开销：
+- `String` 常量池：相同字面量共享同一对象
+- `Integer` 缓存：`-128 ~ 127` 范围的整数缓存，`Integer.valueOf(127) == Integer.valueOf(127)` 为 `true`
+- 数据库连接池、线程池：复用昂贵对象
+
+### 无状态类
+
+没有任何实例变量的类（如工具类 `Math`、`Collections`），多线程访问时不存在线程安全问题，因为每次调用的数据都在各自的栈帧中。
+
+---
+
+## 七、AQS（AbstractQueuedSynchronizer）
+
+AQS 是 Java 并发包中 **阻塞式锁和相关同步器的基础框架**，ReentrantLock、Semaphore、CountDownLatch 等都基于它实现。
+
+### 核心结构
+
+```
+AQS 内部：
+  volatile int state          // 同步状态（0=未锁定，≥1=已锁定/重入次数）
+  Node head, tail             // 双向 FIFO 等待队列（CLH 队列变体）
+  Thread exclusiveOwnerThread // 当前独占锁的线程
+```
+
+- **state**：用于表示资源的状态，不同同步器赋予不同语义（ReentrantLock 中 0=未锁定，ReentrantLock 重入时 state 累加）
+- **等待队列**：类似管程的 EntryList，阻塞等待锁的线程以 Node 形式加入队列尾部
+- **条件变量**：`ConditionObject` 实现，类似管程的 WaitSet，支持 `await()` / `signal()`
+
+### 工作流程（以独占锁为例）
+
+1. 线程 A 调用 `lock()`，CAS 将 state 从 0 改为 1，成功则持有锁
+2. 线程 B 调用 `lock()`，CAS 失败，将自身封装成 Node 加入队列，调用 `LockSupport.park()` 阻塞
+3. 线程 A 调用 `unlock()`，state 减为 0，调用 `LockSupport.unpark()` 唤醒队列头部线程
+4. 线程 B 被唤醒后再次尝试 CAS 获取锁
+
+### 子类需实现的方法
+
+| 方法 | 说明 |
+|------|------|
+| `tryAcquire(int arg)` | 尝试独占获取锁（CAS 修改 state） |
+| `tryRelease(int arg)` | 尝试独占释放锁 |
+| `tryAcquireShared(int arg)` | 尝试共享获取锁 |
+| `tryReleaseShared(int arg)` | 尝试共享释放锁 |
+
+AQS 提供了排队、阻塞、唤醒的通用框架，子类只需关注 state 的含义和 CAS 逻辑。
+
+---
+
+## 八、ReentrantLock（可重入锁）
+
+### 基本使用
+
+```java
+ReentrantLock lock = new ReentrantLock();
+
+lock.lock();               // 阻塞获取锁
+try {
+    // 临界区
+} finally {
+    lock.unlock();         // 必须在 finally 中释放，避免异常时死锁
+}
+
+// 可中断等待
+lock.lockInterruptibly();  // 等待期间可被 interrupt() 中断
+
+// 尝试获取，不阻塞
+boolean acquired = lock.tryLock();          // 立即返回
+boolean acquired2 = lock.tryLock(3, TimeUnit.SECONDS);  // 最多等 3 秒
+```
+
+### 与 synchronized 对比
+
+| 对比点 | synchronized | ReentrantLock |
+|--------|-------------|---------------|
+| 可中断 | 不可中断 | `lockInterruptibly()` 支持中断 |
+| 超时获取 | 不支持 | `tryLock(timeout)` |
+| 公平/非公平 | 非公平 | 构造器参数控制 `new ReentrantLock(true)` |
+| 条件变量 | 单个 wait/notify | 多个 Condition（`lock.newCondition()`）|
+| 释放 | JVM 自动释放 | 必须手动 `unlock()`（在 finally 中）|
+
+### 公平锁 vs 非公平锁
+
+- **非公平锁（默认）**：新来的线程直接尝试 CAS 抢锁，若成功则跳过队列；等待线程有可能被"插队"。吞吐量更高。
+- **公平锁**：获取锁前先检查队列是否有等待线程，有则直接入队等待，严格按 FIFO 顺序。减少饥饿，但增加上下文切换开销。
+
+### 可重入原理
+
+同一线程已持有锁时，再次调用 `lock()` 只是将 state 加 1（不会阻塞自己）；`unlock()` 将 state 减 1，降为 0 时才真正释放锁。
+
+### 条件变量（Condition）
+
+ReentrantLock 支持多个条件变量，可以将不同条件的等待线程分组管理，精确唤醒：
+
+```java
+ReentrantLock lock = new ReentrantLock();
+Condition notFull  = lock.newCondition();  // 队列不满
+Condition notEmpty = lock.newCondition();  // 队列非空
+
+// 生产者
+lock.lock();
+try {
+    while (queue.isFull()) notFull.await();  // 满了就等"不满"条件
+    queue.add(item);
+    notEmpty.signal();  // 精确唤醒消费者
+} finally { lock.unlock(); }
+```
+
+### 实现原理（非公平锁）
+
+`NonfairSync` 继承自 AQS，内部结构：state（锁状态）、head/tail（等待队列）、exclusiveOwnerThread（持有者）。
+
+- 竞争失败的线程以 Node 形式加入 CLH 双向链表队尾，调用 `park()` 阻塞
+- 每个节点有义务在释放时唤醒其后继节点（`unpark`）
+- "非公平"体现在：新来的线程先尝试 CAS，若正好在持有者释放的瞬间抢到，被唤醒的队列节点竞争失败，重新阻塞
+
+---
+
+## 九、线程池 ThreadPoolExecutor
+
+### 核心参数
+
+```java
+new ThreadPoolExecutor(
+    int corePoolSize,        // 核心线程数：长期保留，即使空闲也不销毁
+    int maximumPoolSize,     // 最大线程数：包括核心线程 + 救急线程
+    long keepAliveTime,      // 救急线程空闲超时时长
+    TimeUnit unit,           // 时间单位
+    BlockingQueue<Runnable> workQueue,  // 任务队列（核心线程全忙时入队）
+    ThreadFactory threadFactory,        // 线程工厂（可自定义线程名等）
+    RejectedExecutionHandler handler    // 拒绝策略（队列满且达到最大线程数时触发）
+)
+```
+
+**线程池状态**（用 int 高 3 位存储，低 29 位存线程数）：
+
+| 状态 | 说明 |
+|------|------|
+| RUNNING | 正常接受新任务，处理队列任务 |
+| SHUTDOWN | 不接受新任务，但处理队列中已有任务（`shutdown()` 触发）|
+| STOP | 不接受新任务，不处理队列任务，中断正在执行的线程（`shutdownNow()` 触发）|
+| TIDYING | 所有任务已终止，线程数为 0 |
+| TERMINATED | `terminated()` 钩子执行完毕 |
+
+### 任务提交流程
+
+```
+提交任务
+  → 核心线程数未满 → 创建核心线程执行
+  → 核心线程已满 → 任务进入队列
+  → 队列已满 + 未达最大线程数 → 创建救急线程执行
+  → 队列已满 + 达到最大线程数 → 执行拒绝策略
+```
+
+**救急线程**：超过 corePoolSize 创建的线程，空闲超过 keepAliveTime 后自动销毁。
+
+### 内置拒绝策略
+
+| 策略 | 行为 |
+|------|------|
+| `AbortPolicy`（默认） | 抛出 `RejectedExecutionException` |
+| `CallerRunsPolicy` | 让提交任务的调用者线程自己执行任务（降速，不丢任务）|
+| `DiscardPolicy` | 静默丢弃新任务 |
+| `DiscardOldestPolicy` | 丢弃队列头部最旧的任务，重新尝试提交 |
+
+### 常用工厂方法
+
+**`Executors.newFixedThreadPool(n)`**：线程数固定为 n，无救急线程，任务队列无界（`LinkedBlockingQueue`）。适合任务数已知的场景；无界队列可能导致 OOM。
+
+**`Executors.newCachedThreadPool()`**：所有线程都是救急线程（keepAliveTime=60s），队列用 `SynchronousQueue`（容量为 0，必须有线程接收才能放入）。高并发短任务场景效果好；无上限线程数可能 OOM。
+
+**`Executors.newSingleThreadExecutor()`**：线程数固定为 1，任务队列无界。保证任务串行执行，且出错后自动重建线程（区别于自己 new 一个单线程，出错就没有线程了）。
+
+**`Executors.newScheduledThreadPool(n)`**：支持定时和周期性任务：
+- `scheduleAtFixedRate(task, delay, period, unit)`：按固定速率，上次**开始**后 period 再次执行（若执行超时，追赶但不重叠）
+- `scheduleWithFixedDelay(task, delay, delay, unit)`：上次**结束**后再等 delay 才执行，间隔固定
+
+### 提交任务 API
+
+```java
+executor.execute(runnable);                     // 无返回值
+Future<?> f1 = executor.submit(runnable);       // Future.get() 返回 null
+Future<T>  f2 = executor.submit(callable);       // Future.get() 返回结果
+List<Future<T>> futures = executor.invokeAll(callableList);  // 批量提交，等全部完成
+T result = executor.invokeAny(callableList);    // 返回最先完成的结果
+```
+
+### 关闭线程池
+
+```java
+executor.shutdown();     // 软关闭：不接受新任务，等待已提交任务执行完毕
+executor.shutdownNow();  // 强关闭：不接受新任务，中断正在执行的任务，返回队列中未执行的任务列表
+```
+
+### 正确处理任务异常
+
+```java
+// 方式 1：execute() 提交时，在 run() 内 try-catch
+executor.execute(() -> {
+    try {
+        doTask();
+    } catch (Exception e) {
+        log.error("任务执行失败", e);
+    }
+});
+
+// 方式 2：submit() 提交，通过 Future.get() 捕获
+Future<String> future = executor.submit(() -> doTask());
+try {
+    future.get();
+} catch (ExecutionException e) {
+    log.error("任务执行失败", e.getCause());
+}
+```
+
+### 线程数设置建议
+
+- **CPU 密集型任务**（大量计算）：线程数 = CPU 核心数 + 1，多一个备用应对偶发中断
+- **IO 密集型任务**（网络/磁盘等待多）：线程数 = CPU 核心数 × (1 + IO 等待时间 / CPU 计算时间)，通常 2~4 倍核心数
+- **实际建议**：压测后根据吞吐量和响应时间调整，不要靠公式硬套
+
+---
+
+## 十、ForkJoin 框架
+
+ForkJoin 是 JDK 7 引入的并行计算框架，适合 **能递归拆分的 CPU 密集型任务**（如大数组求和、归并排序、递归遍历）。
+
+### 核心概念
+
+- **ForkJoinPool**：特殊线程池，内部每个线程维护各自的**双端队列（Deque）**
+- **工作窃取（Work Stealing）**：空闲线程从其他线程的 Deque 尾部"偷"任务执行，减少线程饥饿
+- **RecursiveTask\<T\>**：有返回值的任务（类似 Callable）
+- **RecursiveAction**：无返回值的任务（类似 Runnable）
+
+### 使用示例
+
+```java
+// 并行求和（任务拆分策略由用户设计）
+class SumTask extends RecursiveTask<Long> {
+    private final int[] array;
+    private final int lo, hi;
+    static final int THRESHOLD = 1000;  // 任务粒度阈值
+
+    SumTask(int[] array, int lo, int hi) { ... }
+
+    @Override
+    protected Long compute() {
+        if (hi - lo <= THRESHOLD) {
+            // 直接计算（足够小）
+            long sum = 0;
+            for (int i = lo; i < hi; i++) sum += array[i];
+            return sum;
+        }
+        // 拆分为两个子任务
+        int mid = (lo + hi) / 2;
+        SumTask left  = new SumTask(array, lo,  mid);
+        SumTask right = new SumTask(array, mid, hi);
+        left.fork();              // 异步提交左侧任务
+        return right.compute()    // 当前线程执行右侧
+             + left.join();       // 等待左侧结果并合并
+    }
+}
+
+ForkJoinPool pool = new ForkJoinPool();
+long result = pool.invoke(new SumTask(array, 0, array.length));
+```
+
+**注意**：ForkJoin 仅适合 CPU 密集场景，若任务中有 IO 等待，工作窃取的优势消失，反而增加调度开销。
+
+---
+
+## 十一、关键概念速查
+
+| 概念 | 一句话说明 |
+|------|-----------|
+| `synchronized` | 基于管程的内置锁，可重入，JVM 自动释放，支持锁升级优化 |
+| `volatile` | 保证可见性 + 禁止重排序，不保证原子性 |
+| `park/unpark` | LockSupport 的阻塞/唤醒，无需持有锁，可先 unpark 再 park |
+| `CAS` | CPU 级原子比较并交换，乐观锁基础，存在 ABA 问题 |
+| `LongAdder` | 分散累加单元减少 CAS 竞争，高并发下比 AtomicLong 快 |
+| `AQS` | 同步器框架，提供 state + FIFO 队列 + park/unpark，ReentrantLock 等基于此实现 |
+| `ReentrantLock` | AQS 实现的可重入锁，支持可中断、超时获取、公平/非公平、多 Condition |
+| `ThreadPoolExecutor` | 线程池核心实现，7 个构造参数，任务超过核心线程数先入队再创救急线程 |
+| `ForkJoinPool` | 工作窃取线程池，适合能递归拆分的 CPU 密集型任务 |
+| `Future.get()` | 阻塞等待异步任务结果，出错时抛 ExecutionException |
+| `FutureTask` | 同时实现 Runnable + Future，是 Callable 与 Thread 的桥梁 |

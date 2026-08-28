@@ -2,7 +2,9 @@
 
 ---
 
-## 一、数据库操作
+## 一、基础概念
+
+### 1.1 数据库操作
 
 ```sql
 CREATE DATABASE db_name;            -- 创建
@@ -12,25 +14,37 @@ SHOW DATABASES;                     -- 查看所有数据库
 SHOW TABLES;                        -- 查看当前库的所有表
 ```
 
----
-
-## 二、数据类型
+### 1.2 数据类型
 
 | 类型 | 说明 | 使用场景 |
 |------|------|---------|
 | `INT` | 整数（-21亿~21亿） | 普通整数字段 |
 | `BIGINT` | 大整数 | 主键（推荐） |
 | `VARCHAR(n)` | 可变长字符串，最多 n 字符 | 姓名、标题 |
-| `CHAR(n)` | 定长字符串，不足补空格 | 固定长度如性别'男'/'女' |
+| `CHAR(n)` | 定长字符串，不足补空格 | 固定长度如性别 |
 | `TEXT` | 长文本（最大 65535 字节） | 文章内容 |
 | `DATE` | 日期 `YYYY-MM-DD` | 生日 |
 | `DATETIME` | 日期时间 `YYYY-MM-DD HH:MM:SS` | 创建时间 |
 | `DECIMAL(p, s)` | 精确小数，p 总位数，s 小数位 | 价格 `DECIMAL(10,2)` |
 | `TINYINT(1)` | 布尔值（0/1） | 是否标志 |
 
+### 1.3 SQL 语言分类（面试高频）
+
+| 分类 | 全称 | 作用 | 常用语句 |
+|------|------|------|---------|
+| **DML** | Data Manipulation Language | 操作**行数据** | `SELECT` / `INSERT` / `UPDATE` / `DELETE` |
+| **DDL** | Data Definition Language | 操作**表/库结构** | `CREATE` / `ALTER` / `DROP` / `TRUNCATE` |
+| **DCL** | Data Control Language | 权限控制 | `GRANT` / `REVOKE` |
+| **TCL** | Transaction Control Language | 事务控制 | `COMMIT` / `ROLLBACK` / `SAVEPOINT` |
+
+**三个关键区分点**：
+1. DML 操作行，产生 undo log，可以事务回滚；**DDL 操作结构，执行时自动隐式提交，不能回滚**
+2. **`TRUNCATE` 是 DDL 不是 DML**——删全表数据，不记行级 undo log，无法回滚；`DELETE` 才是 DML，可回滚
+3. 有些教材把 SELECT 单独列为 DQL，面试时广义上 SELECT 属于 DML，两种说法都见过，看题目语境
+
 ---
 
-## 三、表操作
+## 二、表结构操作（DDL）
 
 ### 创建表（CREATE TABLE）
 
@@ -46,43 +60,38 @@ CREATE TABLE student (
 );
 ```
 
-常用约束：
-- `NOT NULL`：不允许为空
-- `DEFAULT value`：默认值
-- `UNIQUE`：唯一约束
-- `AUTO_INCREMENT`：自增（整数主键）
-- `PRIMARY KEY`：主键（自动 NOT NULL + UNIQUE）
-- `FOREIGN KEY`：外键
+常用约束：`NOT NULL` / `DEFAULT` / `UNIQUE` / `AUTO_INCREMENT` / `PRIMARY KEY` / `FOREIGN KEY`
 
 ### 修改表结构（ALTER TABLE）
 
 ```sql
-ALTER TABLE student ADD COLUMN phone VARCHAR(20);          -- 加列
-ALTER TABLE student MODIFY COLUMN s_name VARCHAR(100);     -- 改列类型
+ALTER TABLE student ADD COLUMN phone VARCHAR(20);
+ALTER TABLE student MODIFY COLUMN s_name VARCHAR(100);
 ALTER TABLE student CHANGE COLUMN email contact_email VARCHAR(100); -- 改列名+类型
-ALTER TABLE student DROP COLUMN phone;                     -- 删列
-ALTER TABLE student ADD INDEX idx_name (s_name);           -- 加索引
-ALTER TABLE student ADD UNIQUE INDEX idx_email (email);    -- 加唯一索引
+ALTER TABLE student DROP COLUMN phone;
+ALTER TABLE student ADD INDEX idx_name (s_name);
+ALTER TABLE student ADD UNIQUE INDEX idx_email (email);
 ```
 
 ### 删除/清空表
 
 ```sql
-DROP TABLE student;           -- 删表（结构+数据全删）
-TRUNCATE TABLE student;       -- 清空数据，保留结构，自增归零
+DROP TABLE student;           -- 删表（结构+数据全删，DDL）
+TRUNCATE TABLE student;       -- 清空数据，保留结构，自增归零（DDL，不可回滚）
+DELETE FROM student;          -- 清空数据（DML，可回滚，慢）
 ```
 
 ---
 
-## 四、CRUD 增删改查
+## 三、SQL 查询与操作
 
-### INSERT 插入
+### 3.1 CRUD 增删改查
 
+**INSERT**
 ```sql
--- 单行
 INSERT INTO student (s_name, s_birth, s_sex) VALUES ('赵雷', '1990-01-01', '男');
 
--- 多行（推荐批量插入，效率更高）
+-- 批量插入（效率更高）
 INSERT INTO student (s_name, s_birth, s_sex) VALUES
     ('钱电', '1990-12-21', '男'),
     ('孙风', '1990-05-20', '男');
@@ -92,26 +101,15 @@ INSERT INTO student (s_id, s_name) VALUES (1, '赵雷')
 ON DUPLICATE KEY UPDATE s_name = '赵雷';
 ```
 
-### DELETE 删除
-
+**DELETE / UPDATE**
 ```sql
--- ⚠️ 必须加 WHERE，否则删除全表数据！
+-- ⚠️ 必须加 WHERE，否则操作全表！
 DELETE FROM student WHERE s_id = 1;
-DELETE FROM student WHERE s_sex = '男' AND s_birth < '1990-01-01';
-```
-
-### UPDATE 修改
-
-```sql
--- ⚠️ 必须加 WHERE，否则更新全表！
 UPDATE student SET s_name = '赵七', s_birth = '1991-01-01' WHERE s_id = 1;
-
--- 批量更新（对成绩加5分）
-UPDATE score SET s_score = s_score + 5 WHERE c_id = 1;
+UPDATE score SET s_score = s_score + 5 WHERE c_id = 1;  -- 批量更新
 ```
 
-### SELECT 完整语法 + 执行顺序
-
+**SELECT 完整语法 + 执行顺序**
 ```sql
 SELECT   列名 / 表达式 / 聚合函数      -- ⑥ 最后决定输出哪些列
 FROM     表名                           -- ① 先确定数据来源
@@ -123,144 +121,76 @@ ORDER BY 排序列 ASC/DESC                -- ⑦ 排序
 LIMIT    offset, count;                 -- ⑧ 限制行数
 ```
 
-> **执行顺序**（非常重要！）：FROM → JOIN → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT
+> **执行顺序**：FROM → JOIN → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT
 
----
+**UPDATE / DELETE 也涉及"读"**：执行时必须先用**当前读**找到目标行，这一步会自动加锁，然后再做修改/删除。
 
-## 五、WHERE 条件过滤
+### 3.2 WHERE 条件过滤
 
 ```sql
--- 比较
-WHERE age = 18
-WHERE age != 18           -- 或 <>
-WHERE age > 18
-WHERE age BETWEEN 18 AND 30   -- 含两端，等价 age >= 18 AND age <= 30
+WHERE age BETWEEN 18 AND 30   -- 含两端
 WHERE name IN ('张三', '李四')
-WHERE name NOT IN ('张三', '李四')
-
--- 模糊查询 LIKE
-WHERE name LIKE '张%'    -- 以张开头（% 匹配任意多字符）
-WHERE name LIKE '%三'    -- 以三结尾
-WHERE name LIKE '%风%'   -- 包含风
-WHERE name LIKE '张_'    -- 张+一个任意字符（_ 匹配一个字符）
-
--- NULL 判断（不能用 =，只能用 IS）
-WHERE email IS NULL
-WHERE email IS NOT NULL
-
--- 逻辑组合
+WHERE name LIKE '张%'         -- % 任意多字符，_ 一个字符
+WHERE email IS NULL           -- NULL 只能用 IS，不能用 =
 WHERE age > 18 AND city = '北京'
 WHERE age < 18 OR age > 60
-WHERE NOT (age BETWEEN 18 AND 30)
 ```
 
----
-
-## 六、排序（ORDER BY）
+### 3.3 排序与分页
 
 ```sql
--- 升序（默认）
-SELECT * FROM student ORDER BY s_birth;
-
--- 降序
+-- ORDER BY
 SELECT * FROM student ORDER BY s_birth DESC;
+SELECT c_id, AVG(s_score) AS avg_score FROM score GROUP BY c_id
+ORDER BY avg_score DESC, c_id ASC;   -- 多列排序
 
--- 多列排序：先按平均分降序，平均分相同再按课程编号升序
-SELECT c_id, AVG(s_score) AS avg_score
-FROM score
-GROUP BY c_id
-ORDER BY avg_score DESC, c_id ASC;
+-- LIMIT：offset = (页码-1) × 每页数
+SELECT * FROM student LIMIT 10;          -- 前10条
+SELECT * FROM student LIMIT 10 OFFSET 10; -- 第2页（每页10条）
+SELECT * FROM student LIMIT 10, 10;       -- 等价简写
 ```
 
----
-
-## 七、分页（LIMIT）
-
-```sql
--- 前 10 条
-SELECT * FROM student LIMIT 10;
-
--- 第 2 页（每页 10 条）：offset = (页码-1) × 每页数
-SELECT * FROM student LIMIT 10 OFFSET 10;
--- 等价简写：LIMIT offset, count
-SELECT * FROM student LIMIT 10, 10;
-```
-
----
-
-## 八、聚合函数
+### 3.4 聚合函数
 
 | 函数 | 作用 | 无匹配行返回 |
 |------|------|------------|
-| `COUNT(*)` | 统计行数（含 NULL 行） | 0 |
+| `COUNT(*)` | 统计行数（含 NULL） | 0 |
 | `COUNT(列)` | 统计非 NULL 行数 | 0 |
 | `SUM(列)` | 求和（忽略 NULL） | NULL |
 | `AVG(列)` | 平均值（忽略 NULL） | NULL |
-| `MAX(列)` | 最大值 | NULL |
-| `MIN(列)` | 最小值 | NULL |
+| `MAX(列)` / `MIN(列)` | 最值 | NULL |
 
 ```sql
--- 整张表：无 GROUP BY → 全部行作为1组，输出1行
-SELECT COUNT(*), SUM(s_score), AVG(s_score), MAX(s_score), MIN(s_score)
-FROM score;
-
--- 分组：有 GROUP BY → 每组输出1行
-SELECT c_id, COUNT(*), AVG(s_score)
-FROM score
-GROUP BY c_id;
+SELECT c_id, COUNT(*), AVG(s_score) FROM score GROUP BY c_id;
 ```
 
----
+### 3.5 GROUP BY + HAVING
 
-## 九、GROUP BY + HAVING
-
-### 核心规则
-
-> SELECT 后出现的**普通列**（非聚合函数列），**必须**写在 GROUP BY 里。
+> SELECT 后出现的**普通列**（非聚合列），**必须**写在 GROUP BY 里。
 
 ```sql
--- ❌ 错误：name 不在 GROUP BY 里
+-- ❌ name 不在 GROUP BY
 SELECT dept, name, COUNT(*) FROM employee GROUP BY dept;
 
--- ✅ 正确写法1：name 加入分组
-SELECT dept, name, COUNT(*) FROM employee GROUP BY dept, name;
-
--- ✅ 正确写法2：name 包进聚合函数
+-- ✅ 加入分组 或 包进聚合函数
 SELECT dept, MAX(name), COUNT(*) FROM employee GROUP BY dept;
 ```
-
-### WHERE vs HAVING
 
 | 对比项 | WHERE | HAVING |
 |--------|-------|--------|
 | 过滤时机 | GROUP BY **之前**（过滤行） | GROUP BY **之后**（过滤组） |
-| 能否用聚合函数 | ❌ 不能 | ✅ 可以 |
-| 性能 | 先过滤再聚合，性能好 | 先聚合再过滤，开销大 |
+| 能否用聚合函数 | ❌ | ✅ |
+| 性能 | 先过滤再聚合，好 | 先聚合再过滤，开销大 |
 
 ```sql
--- 查询平均成绩 >= 60 的学生（HAVING 对聚合结果过滤）
-SELECT s_id, AVG(s_score) AS avg_score
-FROM score
-GROUP BY s_id
-HAVING AVG(s_score) >= 60;
-
--- 查询上了语文课且平均分 >= 60 的学生（WHERE 先过滤行，HAVING 再过滤组）
-SELECT s_id, AVG(s_score) AS avg_score
-FROM score
-WHERE c_id = 1            -- 先过滤只保留语文成绩
+-- WHERE 先缩小范围，HAVING 再过滤聚合结果
+SELECT s_id, AVG(s_score) AS avg_score FROM score
+WHERE c_id = 1
 GROUP BY s_id
 HAVING AVG(s_score) >= 60;
 ```
 
----
-
-## 十、多表连接（JOIN）
-
-```
-INNER JOIN（内连接）：两边都有才出现
-LEFT JOIN（左连接）：左表全部输出，右边无匹配则补 NULL
-RIGHT JOIN（右连接）：右表全部输出，左边无匹配则补 NULL
-```
+### 3.6 多表连接（JOIN）
 
 ```sql
 -- INNER JOIN：只保留两表都匹配的行
@@ -270,367 +200,163 @@ INNER JOIN student s ON sc.s_id = s.s_id
 INNER JOIN course c ON sc.c_id = c.c_id;
 
 -- LEFT JOIN：左表全部保留，右表无匹配补 NULL
--- 应用：查询所有学生（含无成绩记录的）
 SELECT s.s_name, sc.s_score
 FROM student s
 LEFT JOIN score sc ON s.s_id = sc.s_id;
 
--- LEFT JOIN + IS NULL 反连接：查询在 A 不在 B 的记录
--- 等价于 NOT IN，但更安全（不受子查询 NULL 影响）
-SELECT s.*
-FROM student s
+-- LEFT JOIN + IS NULL 反连接：查在 A 不在 B 的记录（比 NOT IN 更安全）
+SELECT s.* FROM student s
 LEFT JOIN score sc ON s.s_id = sc.s_id AND sc.c_id = 2
-WHERE sc.s_id IS NULL;   -- 右表 NULL = 没有匹配 = 未学过课程2
+WHERE sc.s_id IS NULL;
 ```
 
----
-
-## 十一、子查询
+### 3.7 子查询
 
 ```sql
--- IN 子查询：平均分 > 80 的学生信息
+-- IN 子查询
 SELECT * FROM student
-WHERE s_id IN (
-    SELECT s_id FROM score GROUP BY s_id HAVING AVG(s_score) > 80
-);
+WHERE s_id IN (SELECT s_id FROM score GROUP BY s_id HAVING AVG(s_score) > 80);
 
--- NOT IN 子查询（⚠️ 子查询返回 NULL 时结果会全为空，生产慎用）
-SELECT * FROM student
-WHERE s_id NOT IN (SELECT s_id FROM score WHERE c_id = 2);
-
--- EXISTS 子查询（推荐：语义清晰，大数据量性能更好）
+-- NOT IN（⚠️ 子查询返回 NULL 时结果全为空，生产慎用，改用 NOT EXISTS）
+-- EXISTS（推荐：找到即停，大数据量性能好）
 SELECT * FROM student s
-WHERE EXISTS (
-    SELECT 1 FROM score sc WHERE sc.s_id = s.s_id AND sc.s_score > 80
-);
+WHERE EXISTS (SELECT 1 FROM score sc WHERE sc.s_id = s.s_id AND sc.s_score > 80);
 
--- NOT EXISTS（比 NOT IN 安全，子查询有 NULL 也不影响）
-SELECT * FROM student s
-WHERE NOT EXISTS (
-    SELECT 1 FROM score sc WHERE sc.s_id = s.s_id AND sc.c_id = 2
-);
-
--- 标量子查询（返回单值）：查成绩最高的学生
-SELECT s_name, s_score
-FROM score sc
-JOIN student s ON sc.s_id = s.s_id
+-- 标量子查询（返回单值）
+SELECT s_name, s_score FROM score sc JOIN student s ON sc.s_id = s.s_id
 WHERE s_score = (SELECT MAX(s_score) FROM score);
 
--- FROM 子查询（派生表）：先聚合后筛选
-SELECT s.s_name, t.avg_score
-FROM student s
-JOIN (
-    SELECT s_id, ROUND(AVG(s_score), 2) AS avg_score
-    FROM score
-    GROUP BY s_id
-) t ON s.s_id = t.s_id
-WHERE t.avg_score > 70;
+-- FROM 子查询（派生表）
+SELECT s.s_name, t.avg_score FROM student s
+JOIN (SELECT s_id, ROUND(AVG(s_score), 2) AS avg_score FROM score GROUP BY s_id) t
+ON s.s_id = t.s_id WHERE t.avg_score > 70;
 ```
 
----
+**子查询 vs JOIN vs EXISTS 选型**：
 
-## 十二、NULL 处理函数
+| 场景 | 推荐 | 理由 |
+|------|------|------|
+| 判断是否存在于另一张表 | `EXISTS` | 找到即停，性能最好 |
+| 判断不存在 | `NOT EXISTS` | 比 NOT IN 安全（子查询含 NULL 时 NOT IN 全为空） |
+| 子查询结果集小 | `IN` | 写法简单 |
+| 子查询结果集大 | `JOIN` / `EXISTS` | 避免大列表 |
+| 需要子查询的其他列 | `JOIN` | IN/EXISTS 只传递存在性 |
 
-```sql
--- IFNULL(值, 默认值)：为 NULL 时返回默认值
-SELECT s_name, IFNULL(s_score, 0) AS score FROM student LEFT JOIN score USING(s_id);
-
--- COALESCE(v1, v2, ...)：返回第一个非 NULL 值（标准 SQL，更通用）
-SELECT COALESCE(phone, email, '无联系方式') FROM users;
-
--- NULLIF(v1, v2)：v1 = v2 时返回 NULL，否则返回 v1（常用于防除零）
-SELECT total / NULLIF(count, 0) FROM stat;   -- count=0 时返回 NULL，不报错
-```
-
----
-
-## 十三、CASE WHEN 条件表达式
+### 3.8 UNION / UNION ALL
 
 ```sql
--- 简单形式（等值匹配）
-SELECT s_id,
-    CASE s_sex WHEN '男' THEN 'M' WHEN '女' THEN 'F' ELSE '?' END AS gender
-FROM student;
-
--- 搜索形式（范围/复杂条件）
-SELECT s_id, s_score,
-    CASE
-        WHEN s_score >= 90 THEN '优秀'
-        WHEN s_score >= 70 THEN '良好'
-        WHEN s_score >= 60 THEN '及格'
-        ELSE '不及格'
-    END AS grade
-FROM score;
-
--- 在聚合中使用（行转列，把多行课程成绩压成一行）
-SELECT s_id,
-    SUM(CASE c_id WHEN 1 THEN s_score ELSE 0 END) AS 语文,
-    SUM(CASE c_id WHEN 2 THEN s_score ELSE 0 END) AS 数学,
-    SUM(CASE c_id WHEN 3 THEN s_score ELSE 0 END) AS 英语
-FROM score
-GROUP BY s_id;
-```
-
----
-
-## 十四、常用内置函数
-
-### 字符串函数
-
-```sql
-CHAR_LENGTH('abc')              -- 字符数 → 3
-LENGTH('abc')                   -- 字节数（中文 UTF-8 占 3 字节）
-CONCAT('Hello', ' ', 'World')   -- 拼接 → 'Hello World'
-SUBSTRING('abcde', 2, 3)        -- 截取（从1开始）→ 'bcd'
-UPPER('hello')                  -- → 'HELLO'
-LOWER('HELLO')                  -- → 'hello'
-TRIM('  abc  ')                 -- 去两端空格 → 'abc'
-REPLACE('abcabc', 'a', 'x')     -- → 'xbcxbc'
-LEFT('abcde', 3)                -- → 'abc'
-RIGHT('abcde', 3)               -- → 'cde'
-LPAD('5', 3, '0')               -- 左补零 → '005'
-```
-
-### 日期函数
-
-```sql
-NOW()                                       -- 当前日期时间
-CURRENT_DATE()                              -- 当前日期
-YEAR(s_birth)                               -- 提取年份
-MONTH(s_birth)                              -- 提取月份
-DAY(s_birth)                                -- 提取日
-DATE_FORMAT(s_birth, '%Y年%m月%d日')         -- 格式化输出
-DATEDIFF('2024-01-10', '2024-01-01')        -- 日期差（天数）→ 9
-DATE_ADD(NOW(), INTERVAL 7 DAY)             -- 加7天
-DATE_SUB(NOW(), INTERVAL 1 MONTH)           -- 减1个月
-TIMESTAMPDIFF(YEAR, s_birth, NOW())         -- 精确年龄（周岁）
-```
-
-### 数学函数
-
-```sql
-ROUND(3.567, 2)   -- 四舍五入 → 3.57
-CEIL(3.1)         -- 向上取整 → 4
-FLOOR(3.9)        -- 向下取整 → 3
-ABS(-5)           -- 绝对值 → 5
-MOD(10, 3)        -- 取余 → 1
-RAND()            -- 0~1 随机小数
-```
-
----
-
-## 十五、窗口函数（MySQL 8.0+）
-
-聚合函数把多行**合并成1行**；窗口函数在每行上**单独计算**，行数不变。
-
-```sql
-函数名() OVER (
-    PARTITION BY 分组列      -- 可选，类似 GROUP BY 但不折叠行
-    ORDER BY 排序列          -- 可选，窗口内排序
-)
-```
-
-### 排名函数
-
-```sql
-SELECT s_id, c_id, s_score,
-    ROW_NUMBER() OVER (PARTITION BY c_id ORDER BY s_score DESC) AS row_num,   -- 1,2,3,4（连续，不并列）
-    RANK()       OVER (PARTITION BY c_id ORDER BY s_score DESC) AS `rank`,    -- 1,1,3,4（并列跳号）
-    DENSE_RANK() OVER (PARTITION BY c_id ORDER BY s_score DESC) AS dense_r    -- 1,1,2,3（并列不跳号）
-FROM score;
-```
-
-| 同分时 | ROW_NUMBER | RANK | DENSE_RANK |
-|--------|-----------|------|------------|
-| 两人并列第1 | 1, 2（强制连续） | 1, 1（第3名跳到3） | 1, 1（第3名为2） |
-
-### 偏移函数
-
-```sql
--- LAG(列, n, 默认值)：取前 n 行的值（常用于环比计算）
--- LEAD(列, n, 默认值)：取后 n 行的值
-SELECT s_id, c_id, s_score,
-    LAG(s_score, 1, 0) OVER (PARTITION BY c_id ORDER BY s_id) AS prev_score
-FROM score;
-```
-
-### 聚合窗口函数（不折叠行）
-
-```sql
--- 每行附上所在课程的平均分
-SELECT s_id, c_id, s_score,
-    AVG(s_score) OVER (PARTITION BY c_id) AS course_avg,
-    SUM(s_score) OVER (ORDER BY s_id)     AS running_total  -- 累计求和
-FROM score;
-```
-
-### 取每门课前 3 名（经典用法）
-
-```sql
-SELECT *
-FROM (
-    SELECT s_id, c_id, s_score,
-        RANK() OVER (PARTITION BY c_id ORDER BY s_score DESC) AS rk
-    FROM score
-) t
-WHERE rk <= 3;
-```
-
----
-
-## 十六、索引
-
-### 作用原理
-
-B+ 树索引把无序数据组织成有序树，查找复杂度从 O(n) 降到 O(log n)。
-代价：写入时需维护索引树（INSERT/UPDATE/DELETE 变慢）；占用磁盘空间。
-
-### 创建与管理
-
-```sql
--- 创建普通索引
-CREATE INDEX idx_name ON student(s_name);
-
--- 创建唯一索引
-CREATE UNIQUE INDEX idx_email ON student(email);
-
--- 创建联合索引（字段顺序很重要！）
-CREATE INDEX idx_name_birth ON student(s_name, s_birth);
-
--- 删除
-DROP INDEX idx_name ON student;
-
--- 查看
-SHOW INDEX FROM student;
-```
-
-### 最左前缀原则（联合索引核心规则）
-
-联合索引 `(a, b, c)` 等价于建了 `(a)`, `(a,b)`, `(a,b,c)` 三个索引：
-
-```sql
--- ✅ 命中索引
-WHERE a = 1
-WHERE a = 1 AND b = 2
-WHERE a = 1 AND b = 2 AND c = 3
-
--- ❌ 未命中（跳过了最左列 a）
-WHERE b = 2
-WHERE c = 3
-WHERE b = 2 AND c = 3
-```
-
-### 索引失效场景
-
-```sql
--- ❌ 列上做函数运算
-WHERE YEAR(created_at) = 2023
--- ✅ 改写为范围查询
-WHERE created_at BETWEEN '2023-01-01' AND '2023-12-31 23:59:59'
-
--- ❌ LIKE 左侧通配符
-WHERE name LIKE '%张'
--- ✅ 右侧通配符可以命中
-WHERE name LIKE '张%'
-
--- ❌ 隐式类型转换（phone 是 VARCHAR，传数字触发转换）
-WHERE phone = 13800001111
--- ✅ 加引号
-WHERE phone = '13800001111'
-
--- ❌ != / NOT IN / NOT EXISTS（一般导致全表扫描）
--- ❌ OR 两侧不都有索引
--- ❌ 数据量少的列（选择性差的列，如性别），建索引意义不大
-```
-
-### EXPLAIN 分析查询
-
-```sql
-EXPLAIN SELECT * FROM student WHERE s_name = '赵雷';
-```
-
-重点关注 `type` 列：
-- `const`：主键/唯一索引等值查询，最快
-- `ref`：普通索引等值查询
-- `range`：索引范围查询
-- `index`：全索引扫描（比全表扫描快一点）
-- `ALL`：全表扫描，需要优化
-
----
-
-## 十七、事务（Transaction）
-
-### 基本语法
-
-```sql
-START TRANSACTION;   -- 开启事务（也可用 BEGIN）
-
-UPDATE account SET balance = balance - 100 WHERE id = 1;
-UPDATE account SET balance = balance + 100 WHERE id = 2;
-
-COMMIT;              -- 全部成功，提交永久生效
--- 或
-ROLLBACK;            -- 任意失败，回滚所有操作
-```
-
-### ACID 特性
-
-| 特性 | 含义 |
-|------|------|
-| **原子性**（Atomicity） | 事务内所有操作要么全部成功，要么全部回滚 |
-| **一致性**（Consistency） | 事务前后数据必须满足所有约束（如账户余额不能为负） |
-| **隔离性**（Isolation） | 并发事务互不干扰，每个事务"看"到的是一致快照 |
-| **持久性**（Durability） | 提交后数据永久保存，系统崩溃也不丢失（WAL 日志保证） |
-
-### 并发问题与隔离级别
-
-| 问题 | 说明 |
-|------|------|
-| **脏读** | 读到其他事务**未提交**的数据 |
-| **不可重复读** | 同一事务两次读同一行，值不同（其他事务提交了 UPDATE） |
-| **幻读** | 同一事务两次查询，行数不同（其他事务插入了新行） |
-
-| 隔离级别 | 脏读 | 不可重复读 | 幻读 |
-|---------|------|----------|------|
-| `READ UNCOMMITTED` | 可能 | 可能 | 可能 |
-| `READ COMMITTED` | 解决 | 可能 | 可能 |
-| `REPEATABLE READ`（MySQL 默认） | 解决 | 解决 | 部分解决（MVCC） |
-| `SERIALIZABLE` | 解决 | 解决 | 解决（性能最差） |
-
-```sql
--- 查看当前隔离级别
-SELECT @@transaction_isolation;
-
--- 设置会话级别
-SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;
-```
-
----
-
-## 十八、UNION / UNION ALL
-
-```sql
--- UNION：合并两个查询，自动去重（有排序开销）
+-- UNION：合并去重（有排序开销）
 SELECT s_id FROM score WHERE c_id = 1
 UNION
 SELECT s_id FROM score WHERE s_score > 90;
 
--- UNION ALL：合并不去重，性能更好（能用 UNION ALL 不用 UNION）
+-- UNION ALL：合并不去重，性能更好（优先用 UNION ALL）
 SELECT s_id FROM score WHERE c_id = 1
 UNION ALL
 SELECT s_id FROM score WHERE s_score > 90;
 ```
 
-注意：两个 SELECT 的**列数和类型**必须一致。
+两个 SELECT 的**列数和类型**必须一致。
 
----
+### 3.9 NULL 处理函数
 
-## 十九、视图（View）
+```sql
+IFNULL(s_score, 0)                        -- 为 NULL 时返回默认值
+COALESCE(phone, email, '无联系方式')       -- 返回第一个非 NULL（更通用）
+total / NULLIF(count, 0)                  -- count=0 时返回 NULL，防除零报错
+```
+
+### 3.10 CASE WHEN 条件表达式
+
+```sql
+-- 搜索形式（范围/复杂条件）
+SELECT s_id, s_score,
+    CASE WHEN s_score >= 90 THEN '优秀'
+         WHEN s_score >= 70 THEN '良好'
+         WHEN s_score >= 60 THEN '及格'
+         ELSE '不及格' END AS grade
+FROM score;
+
+-- 在聚合中使用（行转列）
+SELECT s_id,
+    SUM(CASE c_id WHEN 1 THEN s_score ELSE 0 END) AS 语文,
+    SUM(CASE c_id WHEN 2 THEN s_score ELSE 0 END) AS 数学
+FROM score GROUP BY s_id;
+```
+
+### 3.11 常用内置函数
+
+**字符串**
+```sql
+CHAR_LENGTH('abc')              -- 字符数 → 3
+CONCAT('Hello', ' ', 'World')   -- 拼接
+SUBSTRING('abcde', 2, 3)        -- 截取（从1开始）→ 'bcd'
+UPPER/LOWER('hello')            -- 大小写转换
+TRIM('  abc  ')                 -- 去两端空格
+REPLACE('abcabc', 'a', 'x')    -- 替换
+LPAD('5', 3, '0')               -- 左补零 → '005'
+```
+
+**日期**
+```sql
+NOW() / CURRENT_DATE()
+YEAR/MONTH/DAY(s_birth)
+DATE_FORMAT(s_birth, '%Y年%m月%d日')
+DATEDIFF('2024-01-10', '2024-01-01')   -- 天数差 → 9
+DATE_ADD(NOW(), INTERVAL 7 DAY)
+TIMESTAMPDIFF(YEAR, s_birth, NOW())    -- 精确年龄（周岁）
+```
+
+**数学**
+```sql
+ROUND(3.567, 2)  -- 四舍五入 → 3.57
+CEIL(3.1)        -- 向上取整 → 4
+FLOOR(3.9)       -- 向下取整 → 3
+MOD(10, 3)       -- 取余 → 1
+RAND()           -- 0~1 随机小数
+```
+
+### 3.12 窗口函数（MySQL 8.0+）
+
+聚合函数把多行**合并成1行**；窗口函数在每行上**单独计算**，行数不变。
+
+```sql
+函数名() OVER (PARTITION BY 分组列  ORDER BY 排序列)
+```
+
+**排名函数**
+```sql
+SELECT s_id, c_id, s_score,
+    ROW_NUMBER() OVER (PARTITION BY c_id ORDER BY s_score DESC) AS row_num,  -- 1,2,3（不并列）
+    RANK()       OVER (PARTITION BY c_id ORDER BY s_score DESC) AS `rank`,   -- 1,1,3（并列跳号）
+    DENSE_RANK() OVER (PARTITION BY c_id ORDER BY s_score DESC) AS dense_r   -- 1,1,2（并列不跳号）
+FROM score;
+```
+
+**偏移 / 聚合**
+```sql
+-- LAG 取前 n 行，LEAD 取后 n 行（环比计算常用）
+LAG(s_score, 1, 0) OVER (PARTITION BY c_id ORDER BY s_id)
+
+-- 聚合窗口：不折叠行，每行附带分组聚合结果
+AVG(s_score) OVER (PARTITION BY c_id)        -- 每行附上课程平均分
+SUM(s_score) OVER (ORDER BY s_id)            -- 累计求和
+```
+
+**取每门课前 3 名（经典用法）**
+```sql
+SELECT * FROM (
+    SELECT s_id, c_id, s_score,
+        RANK() OVER (PARTITION BY c_id ORDER BY s_score DESC) AS rk
+    FROM score
+) t WHERE rk <= 3;
+```
+
+### 3.13 视图（View）
 
 视图是**保存的 SELECT 语句**，使用时像普通表一样查询，本身不存储数据。
 
 ```sql
--- 创建视图（高分成绩单）
 CREATE VIEW v_high_score AS
 SELECT s.s_name, c.c_name, sc.s_score
 FROM score sc
@@ -638,44 +364,559 @@ JOIN student s ON sc.s_id = s.s_id
 JOIN course c ON sc.c_id = c.c_id
 WHERE sc.s_score >= 80;
 
--- 像普通表一样使用
 SELECT * FROM v_high_score WHERE c_name = '数学';
 
--- 更新视图定义
-CREATE OR REPLACE VIEW v_high_score AS ...;
-
--- 删除
+CREATE OR REPLACE VIEW v_high_score AS ...;   -- 更新定义
 DROP VIEW v_high_score;
 ```
 
 ---
 
-## 二十、子查询 vs JOIN vs EXISTS 选型建议
+## 四、索引
 
-| 场景 | 推荐写法 | 理由 |
-|------|---------|------|
-| 判断行是否存在于另一张表 | `EXISTS` | 找到即停，性能最好 |
-| 判断行不在另一张表 | `NOT EXISTS` | 比 `NOT IN` 安全（子查询有 NULL 时 NOT IN 结果全为空） |
-| 子查询结果集小（<几百行） | `IN` | 写法简单 |
-| 子查询结果集大 | `JOIN` / `EXISTS` | 避免大列表扫描 |
-| 需要用到子查询的其他列 | `JOIN` | IN/EXISTS 只能传递存在性 |
+### 4.1 是什么 + B+ 树底层
+
+索引是帮助数据库高效查询的**有序数据结构**，使查找从 O(n) 全表扫描降到 O(log n)。**代价**：写入时维护索引树变慢；占用磁盘空间。
+
+InnoDB 默认使用 **B+ 树**索引：
+- **非叶子节点只存 key（导航键）**，同等页大小容纳更多 key，树更矮（通常 2~3 层覆盖千万级数据）
+- **所有数据只存在叶子节点**，查询路径长度固定，性能稳定
+- **叶子节点双向链表连接**，范围查询直接遍历链表，无需回溯
+
+存储单位：页固定 **16KB**，区（Extent）= **1MB** = 64 页。
+
+### 4.2 索引分类
+
+**按功能**：主键索引 / 唯一索引 / 普通索引 / 全文索引
+
+**按存储形式（核心）**：
+
+| 类型 | 叶子节点存什么 | 说明 |
+|------|------------|------|
+| **聚集索引** | 完整行数据 | 每表有且只有一个；无主键时用第一个 NOT NULL UNIQUE 列，再没有则用隐藏 rowid |
+| **二级索引** | 主键值 | 查到主键后还需回聚集索引取完整数据 —— **回表** |
+
+### 4.3 创建与管理
+
+```sql
+CREATE INDEX idx_name ON student(s_name);
+CREATE UNIQUE INDEX idx_email ON student(email);
+CREATE INDEX idx_name_birth ON student(s_name, s_birth);  -- 联合索引，字段顺序重要
+DROP INDEX idx_name ON student;
+SHOW INDEX FROM student;
+```
+
+### 4.4 最左前缀原则
+
+联合索引 `(a, b, c)` 等价于建了 `(a)` / `(a,b)` / `(a,b,c)` 三个索引：
+
+```sql
+-- ✅ 命中（WHERE 中字段顺序无关，优化器会调整）
+WHERE a = 1
+WHERE a = 1 AND b = 2
+
+-- ❌ 未命中（跳过了最左列 a）
+WHERE b = 2
+WHERE b = 2 AND c = 3
+
+-- ⚠️ 范围查询右边的列失效：a > 1 AND b = 2 中 b 的索引失效
+-- 用 >= / <= 代替 > / < 可避免此问题
+```
+
+### 4.5 索引失效场景
+
+```sql
+-- ❌ 列上做函数运算
+WHERE YEAR(created_at) = 2023
+-- ✅ 改写为范围
+WHERE created_at BETWEEN '2023-01-01' AND '2023-12-31 23:59:59'
+
+-- ❌ LIKE 头部模糊（左侧通配符）
+WHERE name LIKE '%张'
+-- ✅ 右侧通配符可命中
+WHERE name LIKE '张%'
+
+-- ❌ 隐式类型转换（phone 是 VARCHAR，传数字触发转换）
+WHERE phone = 13800001111
+-- ✅ 加引号
+WHERE phone = '13800001111'
+
+-- ❌ OR 有一侧没有索引，则两侧都不走索引
+-- ❌ != / NOT IN / NOT EXISTS（一般全表扫描）
+-- ❌ IS NULL / IS NOT NULL（取决于数据分布）
+```
+
+### 4.6 覆盖索引与回表
+
+**覆盖索引**：查询所需字段全部在索引中，无需回表。
+
+```sql
+-- 联合索引 (name, age)
+SELECT name, age FROM student WHERE name = '张三';   -- ✅ 覆盖，不回表
+SELECT name, age, email FROM student WHERE name = '张三';  -- ❌ email 不在索引，需回表
+```
+
+`SELECT *` 几乎必然触发回表，高频查询应按需选字段或设计覆盖索引。
+
+### 4.7 前缀索引
+
+对长字符串只取前 n 个字符建索引，节省空间：
+
+```sql
+CREATE INDEX idx_email_prefix ON users(email(10));
+```
+
+n 的选取：`COUNT(DISTINCT LEFT(email, n)) / COUNT(*)` 计算选择性，接近 1 时说明 n 已足够。
+
+### 4.8 SQL 提示（Index Hint）
+
+```sql
+SELECT * FROM student USE INDEX(idx_name) WHERE s_name = '张三';    -- 建议（MySQL 可忽略）
+SELECT * FROM student IGNORE INDEX(idx_name) WHERE s_name = '张三'; -- 建议忽略
+SELECT * FROM student FORCE INDEX(idx_name) WHERE s_name = '张三';  -- 强制
+```
+
+### 4.9 SQL 性能分析工具
+
+**执行频率**（判断是否值得优化索引）：
+```sql
+SHOW GLOBAL STATUS LIKE 'Com_%';  -- 看 Com_select/insert/update/delete 比例
+```
+
+**慢查询日志**：
+```sql
+SET GLOBAL slow_query_log = 1;
+SET GLOBAL long_query_time = 2;   -- 超过 2 秒才记录
+```
+
+**Profile 详情**（各阶段耗时）：
+```sql
+SET profiling = 1;
+SHOW PROFILES;
+SHOW PROFILE FOR QUERY 1;
+```
+
+**EXPLAIN 执行计划**（最常用）：
+```sql
+EXPLAIN SELECT * FROM student WHERE s_name = '张三';
+```
+
+重点关注字段：
+
+| 字段 | 说明 |
+|------|------|
+| `type` | 连接类型，性能从好到差：`const > eq_ref > ref > range > index > ALL` |
+| `key` | 实际用到的索引，NULL 表示全表扫描 |
+| `key_len` | 用到的索引字节数，越长说明用到的索引列越多 |
+| `rows` | 估计扫描行数 |
+| `Extra` | `Using index`（覆盖索引）/ `Using filesort`（需优化）/ `Using temporary`（需优化）|
+
+- `const`：主键/唯一索引等值查询，最快
+- `ref`：普通索引等值查询
+- `range`：索引范围查询
+- `ALL`：全表扫描，需要优化
+
+### 4.10 索引设计原则
+
+1. 针对**数据量大、查询频繁**的表建索引
+2. 针对 **WHERE / ORDER BY / GROUP BY** 涉及的列建索引
+3. **区分度高**的列优先（身份证号 >> 性别）
+4. 字符串列尽量用**前缀索引**，控制长度
+5. **联合索引优于多个单列索引**（一次查询只能用一个单列索引；联合索引还能利用覆盖索引）
+6. 联合索引中**区分度高的列放左边**（配合最左前缀）
+7. 单表索引数量**不超过 5 个**，索引越多写入维护代价越高
 
 ---
 
-## 二十一、MySQL 8.0 常用新特性速览
+## 五、InnoDB 引擎
+
+### 5.1 逻辑存储结构
+
+```
+表空间（Tablespace，.ibd 文件）
+└── 段（Segment）：数据段、索引段、回滚段等
+    └── 区（Extent）：固定 1MB = 64 个页
+        └── 页（Page）：固定 16KB，InnoDB 与磁盘 IO 的最小单位
+            └── 行（Row）：实际数据记录
+```
+
+### 5.2 内存架构（Buffer Pool）
+
+**Buffer Pool（缓冲池）**：
+- 缓存磁盘上的数据页和索引页，读先查 Buffer Pool，命中直接返回，未命中从磁盘加载并放入
+- 写先改 Buffer Pool 中的页（脏页），后台线程异步刷盘
+- 使用改进的 LRU 算法（young/old 两区域，防止全表扫描把热数据挤出）
+
+**Change Buffer**：对二级索引的写操作，若对应页不在 Buffer Pool，先记入 Change Buffer，读时合并，减少随机 IO。
+
+**Adaptive Hash Index**：InnoDB 自动检测热点查询，对高频等值查询建内存哈希索引，O(1) 访问。
+
+**Log Buffer**：redo log 写磁盘前的内存缓冲，减少 IO 频次。
+
+### 5.3 磁盘架构
+
+| 文件 | 作用 |
+|------|------|
+| `ib_logfile0/1` | redo log，循环写入 |
+| undo log tablespace | 回滚日志，支持事务回滚和 MVCC |
+| Doublewrite Buffer | 脏页刷盘前先写此处，防止页写入一半时崩溃（partial write）|
+
+### 5.4 后台线程
+
+| 线程 | 作用 |
+|------|------|
+| Master Thread | 核心调度线程，调度脏页刷盘、undo log 回收等 |
+| IO Thread | 处理异步 IO（读/写/redo/undo 各有专属） |
+| Purge Thread | 清理已提交事务的 undo log，回收空间 |
+| Page Cleaner Thread | 专门刷脏页，从 Master Thread 分离，减少用户线程等待 |
+
+---
+
+## 六、事务与并发控制
+
+### 6.1 基本语法
 
 ```sql
--- 窗口函数（见第十五节）
+START TRANSACTION;   -- 开启事务（也可用 BEGIN）
+
+UPDATE account SET balance = balance - 100 WHERE id = 1;
+UPDATE account SET balance = balance + 100 WHERE id = 2;
+
+COMMIT;    -- 全部成功，提交永久生效
+ROLLBACK;  -- 任意失败，回滚所有操作
+```
+
+### 6.2 ACID 特性
+
+| 特性 | 含义 | 由什么保证 |
+|------|------|----------|
+| **原子性**（Atomicity） | 事务内所有操作要么全部成功，要么全部回滚 | undo log |
+| **一致性**（Consistency） | 事务前后数据满足所有约束 | 原子性+隔离性+持久性共同保证 |
+| **隔离性**（Isolation） | 并发事务互不干扰，每个事务看到一致快照 | MVCC + 锁 |
+| **持久性**（Durability） | 提交后数据永久保存，崩溃不丢失 | redo log（WAL）|
+
+### 6.3 三大并发问题
+
+| 问题 | 具体场景 |
+|------|---------|
+| **脏读** | 读到其他事务**未提交**的数据（对方回滚后读到假数据） |
+| **不可重复读** | 同一事务两次读同一行，值不同（对方 UPDATE 并提交了） |
+| **幻读** | 同一事务两次查同一范围，**行数**不同（对方 INSERT 并提交了） |
+
+不可重复读 = 已有行的**值**变了；幻读 = 凭空**多出了新行**。两种问题由不同机制解决。
+
+### 6.4 redo log（持久性保证）
+
+**WAL（Write-Ahead Logging）**：事务提交时先把修改写到 redo log（顺序 IO，极快），再异步刷脏页到磁盘（随机 IO）。崩溃重启时从 redo log 恢复未刷盘的修改。
+
+```
+修改 Buffer Pool（内存）→ 写 redo log（顺序 IO）→ COMMIT 返回 → 后台异步刷脏页
+```
+
+redo log 是循环写的固定大小文件（`ib_logfile0/1`），写满后从头覆盖（checkpoint 之前可覆盖）。
+
+### 6.5 undo log（原子性 + MVCC 基础）
+
+每次修改都在 undo log 中记录**逆操作**（INSERT → 对应 DELETE；UPDATE → 记录旧值），事务回滚时执行逆操作还原数据。
+
+undo log 采用**版本链**结构：每条记录有 `roll_pointer` 指向上一版本，形成历史版本链，是 MVCC 的数据基础。
+
+### 6.6 MVCC（多版本并发控制）
+
+**作用**：不加锁让读操作看到一致历史快照，实现**读写不阻塞**。
+
+**隐藏字段**：每行数据有 `DB_TRX_ID`（最近修改的事务ID）和 `DB_ROLL_PTR`（指向 undo log 上一版本）。
+
+**ReadView**：快照读时生成，包含四个字段：
+
+| 字段 | 说明 |
+|------|------|
+| `m_ids` | 生成时所有活跃事务（已开启未提交）的 ID 列表 |
+| `min_trx_id` | m_ids 中最小值 |
+| `max_trx_id` | 下一个将分配的事务 ID（历史最大+1） |
+| `creator_trx_id` | 创建该 ReadView 的事务 ID |
+
+**可见性判断**（对版本链中每个版本的 `trx_id`）：
+```
+trx_id == creator_trx_id          → 自己修改的，可见
+trx_id < min_trx_id               → 已提交的旧事务，可见
+trx_id >= max_trx_id              → ReadView 生成后才开启，不可见
+min_trx_id <= trx_id < max_trx_id → 在 m_ids 中 → 未提交，不可见；不在 → 已提交，可见
+```
+
+沿版本链从最新往旧遍历，**返回第一个可见版本**。
+
+### 6.7 四种隔离级别详解
+
+隔离级别本质是两件事的预设组合：**ReadView 生成时机**（MVCC 行为）+ **当前读自动加什么锁**。
+
+| 隔离级别 | 快照读行为 | 当前读加锁 | 能解决 |
+|---------|----------|----------|-------|
+| READ UNCOMMITTED | 不用 MVCC，直接读最新（含未提交） | 只加行锁 | 无 |
+| **READ COMMITTED（RC）** | 每次快照读**重新生成** ReadView | 只加行锁 | 脏读 |
+| **REPEATABLE READ（RR，默认）** | 第一次生成 ReadView，**后续复用** | 行锁 + 间隙锁（临键锁） | 脏读、不可重复读、幻读（基本） |
+| SERIALIZABLE | SELECT 全升级为当前读 | 全部加锁，完全串行 | 三者全解决 |
+
+---
+
+**READ UNCOMMITTED**：直接读内存最新数据页，不管对方是否提交。
+
+```sql
+-- 事务 B 未提交，事务 A（READ UNCOMMITTED）能读到 B 的修改
+-- B 若回滚，A 读到的就是假数据 → 脏读
+```
+
+几乎不用，脏读在生产中不可接受。
+
+---
+
+**READ COMMITTED（RC）**：
+
+每次快照读重新生成 ReadView，能看到其他事务最新提交的数据 → **无法解决不可重复读**。
+
+```sql
+-- 初始：name='张三'
+-- 事务 A（RC）
+SELECT name FROM t WHERE id = 1;   -- 读到 '张三'
+
+    -- 事务 B 提交：UPDATE t SET name='李四' WHERE id = 1;
+
+SELECT name FROM t WHERE id = 1;   -- 重新生成 ReadView，读到 '李四' ← 不可重复读！
+```
+
+当前读只加行锁，不加间隙锁 → **无法解决幻读**（其他事务可以在范围内插入新行）。
+
+适用场景：需要读到最新提交数据（如库存查询、抢购），接受不可重复读。
+
+---
+
+**REPEATABLE READ（RR，MySQL 默认）**：
+
+第一次快照读生成 ReadView，整个事务内复用 → **解决不可重复读**。
+
+```sql
+-- 初始：name='张三'
+-- 事务 A（RR）
+SELECT name FROM t WHERE id = 1;   -- 生成 ReadView，读到 '张三'
+
+    -- 事务 B 提交：UPDATE t SET name='李四'
+
+SELECT name FROM t WHERE id = 1;   -- 复用 ReadView，仍读到 '张三' ✅
+```
+
+快照读下幻读也被 MVCC 解决（B 插入的新行对 A 的 ReadView 不可见）。
+
+当前读下，自动加临键锁（行锁 + 间隙锁）→ **解决幻读**：
+
+```sql
+-- 事务 A（RR）
+SELECT * FROM t WHERE id > 5 FOR UPDATE;  -- 加临键锁，锁住 id>5 的所有间隙
+
+    -- 事务 B：INSERT INTO t VALUES (7, ...); ← 被阻塞，间隙锁阻止插入
+
+SELECT * FROM t WHERE id > 5 FOR UPDATE;  -- 结果不变 ✅
+```
+
+**一个特殊场景——快照读和当前读混用时出现幻读**：
+
+```sql
+-- 事务 A（RR）
+SELECT * FROM t WHERE id = 7;           -- 快照读，空（id=7不存在）
+
+    -- 事务 B：INSERT INTO t VALUES(7,'xxx'); COMMIT;
+
+UPDATE t SET name='yyy' WHERE id = 7;   -- 当前读！读到了 B 插入的行并修改成功
+SELECT * FROM t WHERE id = 7;           -- 此时能看到 id=7 ← 类幻读
+```
+
+原因：UPDATE 是当前读，读到 B 的行后修改，该行 trx_id 变成当前事务 ID，ReadView 判断为自己修改的，变为可见。**避免方法：全程用 `FOR UPDATE` 当前读，不要混用。**
+
+适用场景：大多数业务的默认选择。
+
+---
+
+**SERIALIZABLE**：所有普通 SELECT 自动升级为 `LOCK IN SHARE MODE`，完全串行，没有并发。性能最差，适用于金融对账等极致一致性场景。
+
+---
+
+**选型建议**：
+
+| 场景 | 推荐级别 | 原因 |
+|------|---------|------|
+| 绝大多数业务 | **REPEATABLE READ** | MySQL 默认，平衡一致性和性能 |
+| 需要读到最新提交（库存、抢购） | **READ COMMITTED** | 避免长事务 ReadView 看不到最新数据 |
+| 报表、统计类长事务 | **REPEATABLE READ** | 整个统计过程看到一致快照 |
+| 金融对账、极致一致性 | **SERIALIZABLE** | 完全串行，承受性能损失 |
+
+```sql
+SELECT @@transaction_isolation;                                       -- 查看当前
+SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;              -- 设置会话
+SET GLOBAL TRANSACTION ISOLATION LEVEL READ COMMITTED;                -- 设置全局
+```
+
+---
+
+## 七、锁
+
+### 7.1 快照读 vs 当前读（理解锁的前提）
+
+| | 快照读 | 当前读 |
+|--|--|--|
+| 触发方式 | 普通 `SELECT` | `SELECT FOR UPDATE` / `LOCK IN SHARE MODE` / `UPDATE` / `DELETE` / `INSERT` |
+| 读的是什么 | MVCC 历史快照，**不加锁** | 最新已提交数据，**必须加锁** |
+
+**UPDATE / DELETE 也涉及读**：WHERE 条件查找目标行用的是当前读，找到的同时就加了锁，然后再做修改。锁只跟当前读有关，普通 SELECT 不加任何行锁。
+
+### 7.2 全局锁（手动）
+
+对整个数据库实例加锁，所有表只读，DML/DDL 全部阻塞。
+
+```sql
+FLUSH TABLES WITH READ LOCK;   -- 加锁
+UNLOCK TABLES;                 -- 释放
+```
+
+用途：全库逻辑备份。InnoDB 推荐用 `mysqldump --single-transaction`，利用 MVCC 快照备份，不需要全局锁。
+
+### 7.3 表级锁
+
+#### 表锁（READ / WRITE）—— 手动
+
+```sql
+LOCK TABLES student READ;    -- 自己和其他连接都只能读
+LOCK TABLES student WRITE;   -- 只有自己能读写，其他连接全阻塞
+UNLOCK TABLES;
+```
+
+#### MDL（元数据锁）—— 自动，感知不到
+
+访问表时系统自动加，不能手动控制：
+- DML → 自动加 MDL **读锁**，多个 DML 可并发
+- DDL → 自动加 MDL **写锁**，与所有 DML 互斥
+
+作用：防止改数据时别人修改了表结构，导致数据错乱。
+
+#### 意向锁（IS / IX）—— 自动，感知不到
+
+加行锁前系统自动在表上加意向锁：
+- 准备加行 S 锁 → 自动加 **IS**（意向共享锁）
+- 准备加行 X 锁 → 自动加 **IX**（意向排他锁）
+
+意向锁之间**互相兼容**；只跟表锁互斥（表写锁和 IS/IX 都互斥，表读锁和 IX 互斥）。
+
+**为什么需要意向锁**：没有它，加表锁前需逐行检查是否有行锁，O(n)；有了它，O(1) 直接看表上有无意向锁。
+
+### 7.4 行级锁（全部自动加）
+
+InnoDB 行锁作用在**索引**上，没有索引时退化为锁全表。分 S 锁（共享）和 X 锁（排他）。
+
+#### 行锁（Record Lock）
+
+锁住**一条已存在的索引记录**，防止别人修改这行。
+
+```sql
+UPDATE t SET name='x' WHERE id=5;              -- 自动加 X 行锁
+SELECT * FROM t WHERE id=5 FOR UPDATE;         -- X 行锁
+SELECT * FROM t WHERE id=5 LOCK IN SHARE MODE; -- S 行锁
+```
+
+解决**不可重复读**：A 持有行锁，B 无法修改该行，A 两次读结果一致。
+
+#### 间隙锁（Gap Lock）
+
+锁住**两条索引记录之间的空隙**，只防 INSERT，不影响已有行的任何读写。只在 RR 级别存在。
+
+```
+表中 id：1    5    10
+间隙：(-∞,1)  (1,5)  (5,10)  (10,+∞)
+
+锁住 (5,10) 间隙：
+  ✅ UPDATE id=5 或 id=10（已有行，行锁管）
+  ✅ INSERT id=11（不在间隙）
+  ❌ INSERT id=6/7/8/9（在间隙内，被阻塞）
+```
+
+解决**幻读**：锁住范围内的空位，别人插不进来，A 两次查行数一致。
+
+间隙锁之间**互相兼容**（两个事务可同时持有同一间隙锁，因为都只是防 INSERT）。
+
+#### 临键锁（Next-Key Lock）= 行锁 + 左侧间隙锁
+
+InnoDB 在 RR 级别的**默认行锁算法**，同时锁住一条记录和其左侧间隙。
+
+```
+临键锁 (1,5] = 间隙锁(1,5) + 行锁[5]
+→ 别人不能修改 id=5（行锁）
+→ 别人不能在 (1,5) 区间插入新行（间隙锁）
+```
+
+#### 插入意向锁（Insert Intention Lock）
+
+INSERT 操作在真正插入前加的特殊间隙锁，表示"我要往这个间隙的某位置插入"。多个事务可同时持有同一间隙的插入意向锁（位置不同时）。插入意向锁与间隙锁**互斥**，这正是间隙锁能阻塞 INSERT 的原因。
+
+### 7.5 哪些锁是自动加的
+
+| 锁 | 自动 / 手动 | 触发时机 |
+|---|---|---|
+| 全局锁 | **手动** | `FLUSH TABLES WITH READ LOCK` |
+| 表读锁 / 写锁 | **手动** | `LOCK TABLES` |
+| MDL | **自动** | 访问表时系统自动加 |
+| 意向锁 IS / IX | **自动** | 加行锁前系统自动加 |
+| 行锁（Record Lock） | **自动** | UPDATE / DELETE / INSERT / SELECT FOR UPDATE |
+| 间隙锁（Gap Lock） | **自动** | RR 级别当前读命中不存在的记录范围 |
+| 临键锁（Next-Key Lock） | **自动** | RR 级别当前读的默认算法 |
+| 插入意向锁 | **自动** | INSERT 执行时 |
+
+### 7.6 锁的退化
+
+InnoDB 默认用临键锁，以下情况自动退化：
+
+**退化为纯行锁（去掉间隙锁）**：查询命中**唯一索引**的**精确等值**且记录存在。
+
+```sql
+-- id 是主键，id=5 存在 → 只锁这行，不锁间隙
+SELECT * FROM t WHERE id = 5 FOR UPDATE;
+```
+
+唯一索引保证不可能再插入另一个 id=5，间隙锁没有意义。
+
+**退化为纯间隙锁（去掉行锁）**：等值查询但记录**不存在**。
+
+```sql
+-- id=7 不存在，落在 (5,10) 间隙 → 没有行可锁，只锁间隙
+SELECT * FROM t WHERE id = 7 FOR UPDATE;
+```
+
+**退化为锁全表**：查询列**没有索引**，全表扫描每行都加行锁。
+
+```sql
+UPDATE t SET age=20 WHERE name='张三';  -- name 无索引 → 锁全表
+```
+
+### 7.7 并发问题完整解决方案
+
+| 并发问题 | 靠什么解决 | 说明 |
+|---------|----------|------|
+| 脏读 | 隔离级别 >= RC | ReadView 只看已提交版本 |
+| 不可重复读 | 行锁（当前读）/ MVCC（快照读） | 行锁阻止对方修改；快照读复用 ReadView |
+| 幻读（快照读） | MVCC（RR 复用 ReadView） | B 插入的新行对 A 的 ReadView 不可见 |
+| 幻读（当前读） | 间隙锁 / 临键锁 | 锁住间隙，B 无法插入新行 |
+
+**隔离级别 = 加锁策略的预设组合，不同级别下数据库自动加的锁种类和范围不同，并发行为也不同。**
+
+---
+
+## 八、MySQL 8.0 新特性速览
+
+```sql
 -- CTE（公用表表达式，替代嵌套子查询，可读性更好）
 WITH cte AS (
-    SELECT s_id, AVG(s_score) AS avg_score
-    FROM score
-    GROUP BY s_id
+    SELECT s_id, AVG(s_score) AS avg_score FROM score GROUP BY s_id
 )
-SELECT s.s_name, cte.avg_score
-FROM student s
-JOIN cte ON s.s_id = cte.s_id
-WHERE cte.avg_score > 80;
+SELECT s.s_name, cte.avg_score FROM student s
+JOIN cte ON s.s_id = cte.s_id WHERE cte.avg_score > 80;
+
+-- 窗口函数（见 3.12 节）
 
 -- JSON 函数
 SELECT JSON_EXTRACT('{"name":"张三"}', '$.name');   -- → '张三'

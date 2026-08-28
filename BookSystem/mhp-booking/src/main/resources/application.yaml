@@ -46,7 +46,7 @@ sa-token:
 xxl:
   job:
     admin:
-      addresses: http://localhost:8080/xxl-job-admin
+      addresses: http://localhost:8088/xxl-job-admin
       accessToken: default_token
     executor:
       appname: booking-executor

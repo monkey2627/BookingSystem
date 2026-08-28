@@ -103,6 +103,8 @@ services:
       - xpack.security.enabled=false
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
       - TZ=Asia/Shanghai
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "9200:9200"
     volumes:

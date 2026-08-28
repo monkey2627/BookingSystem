@@ -235,4 +235,3 @@ class Demo$1 implements Runnable{
 不是。同一个invokedynamic调用点（源码同一个lambda位置），引导方法**只会执行一次**，生成一次lambda类，后续复用。
 不同源码位置的lambda表达式，对应不同invokedynamic调用点，会生成不同的动态lambda类。
 
-如果你需要，我可以给你简单的字节码片段，直观看到MethodHandle、invokedynamic引导方法的参数。
