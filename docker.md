@@ -236,6 +236,17 @@ docker container prune
 
 ### 4.3 进入容器内部
 
+`exec` 是 execute（执行）的缩写，意思是**在一个已经运行的容器里执行一条命令**。
+关键是"已经运行"—— 容器必须是启动状态，`exec` 不会创建新容器。
+
+对比容易混淆的三个命令：
+
+| 命令 | 做什么 |
+|------|--------|
+| `docker run mysql:8.0` | 用镜像**创建并启动**一个新容器 |
+| `docker start mhp-mysql` | **启动**一个已停止的容器 |
+| `docker exec mhp-mysql xxx` | 在**已运行**的容器里执行命令 |
+
 ```bash
 # 进入容器，打开交互式 shell
 docker exec -it mhp-mysql bash
@@ -243,12 +254,22 @@ docker exec -it mhp-redis sh     # 精简镜像没有 bash，用 sh
 
 # -i：保持 stdin 开放（交互）
 # -t：分配伪终端（让输出格式正常）
+# 两者合写 -it，缺一个你输入的内容就看不到或无法输入
 
-# 直接执行命令（不进入 shell）
+# 完整拆解：docker exec -it mhp-mysql mysql -uroot -p222333dyh
+# docker exec          → 在容器里执行命令
+# -it                  → 交互式终端
+# mhp-mysql            → 目标容器名
+# mysql -uroot -p222333dyh → 在容器里运行的程序（MySQL 客户端）+ 参数
+
+# 不加 -it：直接执行命令拿结果，适合非交互式操作
 docker exec mhp-mysql mysqldump -uroot -p222333dyh mhp > backup.sql
-docker exec mhp-redis redis-cli ping   # 返回 PONG
-docker exec mhp-redis redis-cli keys "*"  # 查看所有 Redis key
+docker exec mhp-redis redis-cli ping        # 返回 PONG
+docker exec mhp-redis redis-cli keys "*"   # 查看所有 Redis key
 ```
+
+为什么要用 `exec` 而不是直接输命令：MySQL 装在容器里，宿主机上没有 `mysql` 这个程序，
+`exec` 相当于借用容器里的程序来执行。
 
 ### 4.4 查看日志
 
@@ -385,6 +406,56 @@ volumes:                # 声明具名 Volume
 
 ### 5.3 Compose 核心命令
 
+#### build 和 up 的分工
+
+| 命令 | 职责 | 类比 |
+|------|------|------|
+| `docker compose build` | 把 Dockerfile 烤成镜像（备原材料） | 备菜 |
+| `docker compose up -d` | 用现有镜像把容器跑起来 | 开饭 |
+
+**`up` 不会重新 build 的原因：**
+`up` 判断"镜像存不存在"只看本地缓存有没有，不管 Dockerfile 改没改。
+构建镜像是重操作（要下载插件、执行命令），`up` 的职责只是"把服务跑起来"，
+不应该每次都触发耗时构建。改了 Dockerfile 想生效，必须显式触发：
+
+```bash
+# 方式1：先 build，再 up
+docker compose build elasticsearch
+docker compose up -d
+
+# 方式2：up 时加 --build 强制重新构建
+docker compose up -d --build elasticsearch
+```
+
+**`up -d` 的完整执行流程：**
+
+```
+docker compose up -d
+        │
+        ▼
+1. 读取 docker-compose.yml，解析所有服务定义
+        │
+        ▼
+2. 对每个服务，检查镜像是否存在于本地：
+   ├── 写了 image: mysql:8.0
+   │     └── 本地有？→ 直接用 / 本地没有？→ 去 Docker Hub 拉取
+   └── 写了 build: ...
+         └── 本地有构建好的镜像？→ 直接用（不重新 build）
+             本地没有？→ 自动 build
+        │
+        ▼
+3. 对每个服务，检查容器是否已存在：
+   ├── 容器不存在      → 创建并启动
+   ├── 容器存在且运行中 → 什么都不做
+   └── 容器存在但已停止 → 重新启动
+        │
+        ▼
+4. -d（detach）：后台运行，不阻塞终端
+   不加 -d 则日志打在当前终端，Ctrl+C 就全停了
+```
+
+#### 常用命令
+
 ```bash
 # 以下命令都在 docker-compose.yml 所在目录执行
 
@@ -433,6 +504,31 @@ mhp-ai:
   environment:
     - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}   # 从 .env 读取
 ```
+
+**为什么 Compose 知道要去 `.env` 读？**
+
+不需要任何配置，这是 Docker Compose 的**内置约定**，启动时自动执行三步：
+
+```
+1. 读取当前目录下的 .env，把 KEY=VALUE 加载进内存
+2. 扫描 docker-compose.yml，把所有 ${KEY} 替换成实际值
+3. 用替换后的内容启动容器
+```
+
+用这个命令可以看到变量替换后的最终结果（不会真正启动）：
+
+```bash
+docker compose config
+# ${DEEPSEEK_API_KEY} 会被替换成 .env 里的实际值
+```
+
+文件名**必须**是 `.env`，这是硬性规定。如果要用其他文件名，需要显式指定：
+
+```bash
+docker compose --env-file ./config/prod.env up -d
+```
+
+这个设计叫**约定优于配置**（Convention over Configuration）：框架规定好"去哪里找配置"，遵守约定就自动生效，不需要额外告知。Spring Boot 启动时自动找 `application.yaml` 是同一个道理。
 
 ### 5.5 extra_hosts —— 容器访问宿主机
 
