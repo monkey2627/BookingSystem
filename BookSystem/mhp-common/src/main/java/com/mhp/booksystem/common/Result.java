@@ -35,8 +35,8 @@ public class Result<T> {
     }
 
     /** 成功但无数据返回，如：增删改操作 */
-    public static Result<?> ok() {
-        return ok(null);
+    public static Result<Void> ok() {
+        return new Result<>(ResultCode.SUCCESS.getCode(), ResultCode.SUCCESS.getMessage(), null);
     }
 
     /** 失败，手动指定 code 和 message */
