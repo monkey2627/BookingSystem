@@ -469,6 +469,38 @@ SynchronousMethodHandler.invoke()：
 
 ---
 
+## 五、概念辨析
+
+### OpenFeign 是分布式框架吗？
+
+**不是。** OpenFeign 本身只是一个**声明式 HTTP 客户端**，解决的问题是：把发 HTTP 请求的代码从"手动拼 URL + RestTemplate"变成"写接口 + 注解"。
+
+分布式能力全部来自其他组件：
+
+| 能力 | 由谁提供 |
+|------|---------|
+| 服务注册与发现 | Nacos |
+| 负载均衡 | Spring Cloud LoadBalancer（`FeignBlockingLoadBalancerClient` 桥接）|
+| 熔断降级 | Sentinel |
+| **HTTP 调用语法糖** | **OpenFeign 干的事** |
+
+去掉 Nacos，OpenFeign 就只能用 `url` 参数写死地址；去掉 LoadBalancer，就没有多实例轮询。OpenFeign 依附于整个 Spring Cloud 生态，自己不构成分布式能力。
+
+### Spring Cloud 是 RPC 框架吗？
+
+**不是。** Spring Cloud 是微服务开发**套件**，底层通信是 HTTP/1.1 + JSON 文本。RPC 框架特指二进制协议（Dubbo/gRPC/Thrift），在性能和接口契约强度上与 HTTP/REST 有本质差异：
+
+| 维度 | Spring Cloud（HTTP/REST）| Dubbo（RPC）|
+|------|--------------------------|------------|
+| 协议 | HTTP/1.1 | HTTP/2（Triple）/ 私有 TCP |
+| 序列化 | JSON 文本 | Hessian2 / Protobuf 二进制 |
+| 接口契约 | HTTP URL + 注解，运行时发现错误 | Java 接口，编译期检查 |
+| 连接模型 | Keep-Alive，同连接请求串行 | 长连接多路复用 |
+
+两者定位不同：Spring Cloud 最大化兼容性、降低接入门槛；Dubbo 追求高性能和强契约。本项目同时使用两者——**强依赖调用走 Dubbo，弱依赖/展示数据走 OpenFeign**。
+
+---
+
 ## 附录：Nacos 配置中心
 
 配置中心与 OpenFeign 无直接关联，单独作为附录供参考。

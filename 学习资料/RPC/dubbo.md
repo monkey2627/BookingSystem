@@ -538,10 +538,41 @@ HTTP/2 HEADERS 帧：
   content-type = application/grpc+proto
 
 HTTP/2 DATA 帧：
-  [Hessian2 或 Protobuf 序列化的参数值，二进制]
+  5字节 gRPC 前缀：第1字节=压缩标志（0=不压缩），第2~5字节=消息体长度（大端 int）
+  后续字节：Hessian2 / Protobuf 序列化的参数值（二进制）
+
+HTTP/2 Trailers 帧（END_STREAM，响应结束）：
+  grpc-status: 0      ← 0=OK，13=INTERNAL...
+  grpc-message: ""    ← 出错时的描述
 ```
 
-Provider 从 path 里解出接口名和方法名，从 DATA 帧反序列化参数，再用反射调用真实实现。
+Provider 从 path 里解出接口名和方法名，剥掉 DATA 帧的 gRPC 5字节前缀，反序列化参数，反射调用真实实现，把结果写回 DATA + Trailers。
+
+### 7.3 Triple 的两种工作模式
+
+| 模式 | 特征 | 适用 |
+|------|------|------|
+| **Protobuf IDL 模式** | 写 `.proto` → 生成 Stub → `content-type: application/grpc+proto` | 需要与 gRPC 客户端（Go/Python）互通 |
+| **Java Interface 模式** | 直接写 Java 接口，框架包装 `TripleRequestWrapper` | 本项目使用，迁移成本低，无需 IDL |
+
+Java Interface 模式下，参数被包装进 `TripleRequestWrapper`（一个 Protobuf 消息，字段是 `args`/`argTypes`/`serializeType`，接口名和方法名在 HEADERS 帧的 `:path` 里），套上 gRPC 5字节前缀后放入 DATA 帧。对 Nginx/Envoy 的穿透能力两种模式相同。
+
+Triple 支持四种调用模型：Unary（普通 1请求-1响应）、Client Streaming、Server Streaming、Bidirectional Streaming。**本项目只用 Unary。**
+
+### 7.4 Netty 在 Triple 中扮演什么角色
+
+Netty 只负责 I/O 层，**不理解 RPC 语义**：
+
+```
+TCP 字节流
+  → [Http2FrameCodec]（Netty Handler）：字节 → HTTP/2 帧对象
+  → [TripleServerTransport]（Dubbo Handler）：
+       读 HEADERS 帧 → 解出接口名/方法名
+       读 DATA 帧   → 剥掉 gRPC 5字节前缀 → 反序列化参数
+  → Dubbo 业务层：反射调用 @DubboService 实现
+```
+
+Netty 不知道 gRPC / 接口名 / 方法名。它只是"快递员"——负责帧的收发；帧里装什么（RPC 语义）是 Dubbo 自己解析的。
 
 ### 7.3 为什么 Triple 选 HTTP/2 而不是继续用私有 TCP
 

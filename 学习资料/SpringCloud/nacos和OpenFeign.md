@@ -768,3 +768,45 @@ SynchronousMethodHandler.invoke()
 ```
 
 如果调用失败（超时、5xx）且配置了 `fallback`，则调用 fallback 类对应方法返回兜底数据。
+
+---
+
+## 五、概念辨析
+
+### OpenFeign 是分布式框架吗？
+
+**不是。** OpenFeign 本身只是一个**声明式 HTTP 客户端**，它解决的问题只有一个：把发 HTTP 请求的代码从"手动拼 URL + 调 RestTemplate"变成"写接口 + 注解"，让代码更简洁。
+
+"分布式框架"的核心能力包括：服务注册与发现、负载均衡、配置中心、熔断限流、链路追踪……这些能力 OpenFeign **一个也不提供**。
+
+| 能力 | 由谁提供 |
+|------|---------|
+| 服务注册与发现 | Nacos（`spring-cloud-starter-alibaba-nacos-discovery`）|
+| 负载均衡 | Spring Cloud LoadBalancer（`FeignBlockingLoadBalancerClient` 桥接）|
+| 熔断降级 | Sentinel（`spring-cloud-starter-alibaba-sentinel`）|
+| 配置中心 | Nacos Config |
+| 链路追踪 | SkyWalking / Micrometer Tracing |
+| **HTTP 调用语法糖** | **OpenFeign** ← 这才是 OpenFeign 干的事 |
+
+可以这样理解：OpenFeign 是"最后一公里"的调用工具，它把其他组件解析好的 IP:Port 拿过来，优雅地发出 HTTP 请求。去掉 Nacos，OpenFeign 就只能用 `url` 参数写死地址；去掉 LoadBalancer，就没有多实例轮询。**OpenFeign 依附于整个 Spring Cloud 生态，自己不构成分布式能力。**
+
+---
+
+### Spring Cloud 是 RPC 框架吗？
+
+**不是。** Spring Cloud 是一套**微服务开发套件**，它的底层通信协议是 **HTTP/REST**（OpenFeign 发的是 HTTP/1.1 + JSON 文本）。
+
+"RPC 框架"特指那些使用**二进制协议**的框架：
+
+| 框架 | 协议 | 序列化 |
+|------|------|--------|
+| **Dubbo** | 私有 TCP（老）/ HTTP/2（Triple）| Hessian2 / Protobuf |
+| **gRPC** | HTTP/2 | Protobuf |
+| **Thrift** | TCP | Thrift 二进制 |
+| Spring Cloud OpenFeign | HTTP/1.1 | JSON 文本 |
+
+HTTP/REST 和 RPC 都属于"跨进程调用"，但在工程实践中：
+- **HTTP/REST**：文本协议，可读性好，天然跨语言，带宽开销大，同一连接请求串行（HTTP/1.1 队头阻塞）
+- **RPC 框架**：二进制协议，性能高（体积小 + 多路复用），强类型接口，编译期检查，主要面向内部服务间调用
+
+Spring Cloud 选择 HTTP/REST 而非 RPC 协议，是为了最大化与现有 Web 生态的兼容性，降低接入门槛。Dubbo 选择二进制 + HTTP/2，是为了追求更高的性能和更严格的接口契约。两者定位不同，不是竞争关系——本项目同时使用两者：**强依赖调用走 Dubbo，弱依赖/展示数据走 OpenFeign**。

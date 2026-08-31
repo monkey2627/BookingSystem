@@ -712,11 +712,18 @@ HTTP/2 HEADERS 帧（元信息）：
   content-type = application/grpc+proto
 
 HTTP/2 DATA 帧（实际数据）：
-  [Hessian2 或 Protobuf 序列化的参数值，二进制]
-  ← 参数不在 path 里，也不是 JSON，是二进制塞在帧里
+  ┌─────────────── gRPC 帧头（固定 5 字节）──────────────┐
+  │ 第1字节：压缩标志（0=不压缩，1=gzip）                │
+  │ 第2~5字节：后续消息体字节数（4字节大端 int）          │
+  └──────────────────────────────────────────────────────┘
+  后续字节：Hessian2 / Protobuf 序列化的参数值（二进制）
+
+HTTP/2 Trailers 帧（响应结束，携带 END_STREAM 标志）：
+  grpc-status: 0      ← 0=OK，1=CANCELLED，2=UNKNOWN，13=INTERNAL
+  grpc-message: ""    ← 出错时的错误描述文字
 ```
 
-Provider 收到后，从 path 里解出接口名和方法名，从 DATA 帧里反序列化出参数，然后用反射调用真实实现。
+Provider 收到后，从 path 里解出接口名和方法名，剥掉 DATA 帧里的 gRPC 5字节前缀，反序列化剩余字节拿到参数，然后用反射调用真实实现，把结果序列化后写回 DATA + Trailers。
 
 ---
 
@@ -739,6 +746,118 @@ Provider 收到后，从 path 里解出接口名和方法名，从 DATA 帧里�
 | 多路复用 | 自己实现 | HTTP/2 原生支持 |
 
 `port: -1` 的原理：Dubbo 启动时随机找一个可用端口绑定，然后把**实际端口**注册到 Nacos。Consumer 从 Nacos 拿到的地址里包含真实端口，无需手动配置，避免与 Spring Boot HTTP 端口冲突。
+
+---
+
+### 11.5 Triple 的两种工作模式
+
+Triple 根据是否使用 Protobuf IDL 分两种模式，HTTP/2 帧结构完全相同，只是 DATA 帧里的序列化格式不同：
+
+#### 模式一：Protobuf IDL 模式（与 gRPC 完全互通）
+
+先写 `.proto` 文件定义服务契约，再用 protoc + Dubbo 插件生成 Java Stub：
+
+```proto
+service RpcMerchantService {
+    rpc GetMerchantByUserId (GetMerchantRequest) returns (MerchantResponse);
+}
+message GetMerchantRequest { int64 userId = 1; }
+message MerchantResponse   { int64 id = 1; string nickname = 2; }
+```
+
+框架用 Protobuf 序列化，`content-type: application/grpc+proto`，DATA 帧里是标准 Protobuf 二进制。
+
+- **优点**：与任何 gRPC 客户端（Go / Python / Node.js）无缝互通，跨语言能力最强
+- **缺点**：需要维护 `.proto` 文件；改接口须同步改 IDL 并重新生成代码
+
+#### 模式二：Java Interface 模式（项目实际使用，迁移成本低）
+
+直接用 Java 接口定义，不写 `.proto`：
+
+```java
+public interface RpcMerchantService {
+    MerchantDTO getMerchantByUserId(Long userId);
+}
+```
+
+Dubbo 框架内部把调用参数包装进 `TripleRequestWrapper`（本身是一条 Protobuf 消息），再套上 gRPC 5字节前缀放入 DATA 帧：
+
+```
+HEADERS 帧（接口名/方法名在这里）：
+  :path = /com.mhp.booksystem.rpc.RpcMerchantService/getMerchantByUserId
+
+DATA 帧有效载荷：
+  5字节 gRPC 前缀 + TripleRequestWrapper（Protobuf 编码）
+    └── args:          [bytes(Hessian2(userId=123))]  ← 每个参数序列化后的字节
+    └── argTypes:      ["java.lang.Long"]             ← 参数类型名
+    └── serializeType: "hessian2"                     ← 序列化方式
+```
+
+接口名和方法名来自 HEADERS 帧的 `:path`，不在 TripleRequestWrapper 里。
+
+- **优点**：和写普通 Java 接口一样，无 IDL，从老 Dubbo 迁移无需改接口代码
+- **缺点**：`TripleRequestWrapper` 是 Dubbo 私有格式，纯 gRPC 客户端无法直接调用
+
+**本项目用 Java Interface 模式。** 两种模式在 HTTP/2 帧结构上完全相同（HEADERS + DATA + Trailers），对 Nginx/Envoy 等基础设施的穿透能力没有区别。
+
+---
+
+### 11.6 Triple 的四种调用模型
+
+HTTP/2 的双向流能力让 Triple 支持四种调用模型，由不同数量的 DATA 帧组合表达：
+
+| 模型 | 请求侧 | 响应侧 | 典型场景 |
+|------|--------|--------|---------|
+| **Unary（一元）** | 1个 DATA 帧 | 1个 DATA 帧 | 普通 RPC；本项目所有 Dubbo 调用都是此类 |
+| **Client Streaming（客户端流）** | N个 DATA 帧 | 1个 DATA 帧 | 大文件分块上传、批量数据上报 |
+| **Server Streaming（服务端流）** | 1个 DATA 帧 | N个 DATA 帧 | 实时数据订阅、大结果集分批返回 |
+| **Bidirectional Streaming（双向流）** | N个 DATA 帧 ↔ | ↔ N个 DATA 帧 | 实时聊天、音视频、游戏帧同步 |
+
+```java
+// Unary（默认，最常用）
+MerchantDTO result = rpcMerchantService.getMerchantByUserId(userId);
+
+// Server Streaming（流式返回，Java Interface 模式，Dubbo 3.2+）
+StreamObserver<MerchantDTO> observer = new StreamObserver<>() {
+    public void onNext(MerchantDTO value)  { /* 每收到一条响应处理 */ }
+    public void onCompleted()              { /* 流结束 */ }
+    public void onError(Throwable t)       { /* 出错 */ }
+};
+rpcMerchantService.streamMerchants(filter, observer);
+```
+
+**本项目只使用 Unary 模式**，其余三种是 Triple 协议的能力储备，了解边界即可。
+
+---
+
+### 11.7 Netty 在 Triple 中扮演什么角色
+
+常见误解："Netty 负责 Dubbo RPC 通信"——这个说法不准确。更准确的表述是：
+
+**Netty 只负责 I/O 层（TCP 字节 → HTTP/2 帧），完全不理解 RPC 语义。**
+
+```
+收到 TCP 字节流
+    ↓
+[Http2FrameCodec]（Netty 内置 ChannelHandler）
+  将字节流解码为 HTTP/2 帧对象（HEADERS / DATA / TRAILERS / SETTINGS...）
+  Netty 的工作到此结束——它只处理帧的结构，不知道帧里装的是什么业务数据
+    ↓
+[TripleServerTransport]（Dubbo 注册在 Netty Pipeline 中的 Handler）
+  读取 HEADERS 帧：取出 :path，解析接口全限定名 + 方法名
+  读取 DATA 帧：剥掉 gRPC 5字节前缀，拿到序列化后的参数字节
+  读取 TRAILERS 帧（如果有）：判断是否出错
+    ↓
+[Dubbo 业务层]
+  按接口名 + 方法名，用反射找到 @DubboService 实现类
+  反序列化参数字节（Hessian2 / Protobuf / TripleRequestWrapper）
+  调用真实 Service 方法，拿到返回值
+  序列化返回值 → 写 DATA 帧 + Trailers 帧回给 Consumer
+```
+
+**Netty 不知道 gRPC 协议、不知道接口名/方法名、不知道 Hessian2 是什么。** 它只提供了高性能的 NIO 事件驱动 I/O 框架和 HTTP/2 帧编解码器（`Http2FrameCodec`）。Dubbo 把自己的业务 Handler（`TripleServerTransport`）挂在 Netty 的 `ChannelPipeline` 上，Netty 把帧对象交给 Dubbo，Dubbo 再做 RPC 语义的解析和调用。
+
+**一句话记忆**：Netty 是"快递员"，负责收发包裹（帧）；包裹里装什么（RPC 接口/方法/参数）是 Dubbo 自己的事。
 
 ---
 
