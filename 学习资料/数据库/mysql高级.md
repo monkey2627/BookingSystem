@@ -156,10 +156,113 @@ Drop name on table_name
 ### redo log
 * 保证事务持久性
 * ![img_20.png](img_20.png)
-* redo log里面记录的数据长什么样子？
+
+**redo log 记录的是物理层面的变更**（磁盘第几页第几个字节改成了什么），只记新值，不记旧值：
+
+```
+LSN（日志序列号）: 1234567
+状态: prepare / commit
+表空间ID: 5   页号: 38   偏移: 1024
+新值: 0xE4B88AE6B5B7（'上海'的 UTF-8 字节）
+```
+
+redo log 是固定大小的**环形文件**（默认两个文件各 48MB 循环写），写满了从头覆盖，不会无限增长。
+
+**刷盘时机**由 `innodb_flush_log_at_trx_commit` 控制：
+
+| 值 | 行为 | 安全性 |
+|----|------|--------|
+| 1（默认） | 每次事务提交都 write + fsync 到磁盘 | 最安全，不丢数据 |
+| 2 | 每次提交 write 到 OS buffer，每秒 fsync 到磁盘 | MySQL 崩溃不丢，断电丢最多 1 秒 |
+| 0 | 每秒 write + fsync | MySQL 崩溃也可能丢最多 1 秒 |
+
 ### undo log
 ![img_21.png](img_21.png)
-undo log中的记录数据长什么样？
+
+**undo log 记录的是逻辑层面的逆操作**，只记旧值，用于回滚和 MVCC：
+
+```
+事务ID: txn_8823
+操作:   UPDATE 的逆操作
+内容:   UPDATE merchant SET city='北京' WHERE id=1
+旧版本指针: → 上一个历史版本（MVCC 版本链）
+```
+
+两个用途：
+- **事务回滚**：执行 ROLLBACK 时照着 undo log 把数据改回去
+- **MVCC 多版本读**：事务 A 修改数据时，事务 B 来读，顺着 undo log 的旧版本指针找到修改前的值，不阻塞
+
+### binlog
+
+binlog 是 MySQL Server 层的日志（不属于 InnoDB），ROW 格式下**同时记录旧值和新值**：
+
+```
+时间戳: 2026-08-31 09:05:00
+事件类型: UPDATE_ROWS_EVENT
+表: mhp.merchant
+
+before: id=1, city='北京', intro='专业妆娘', avg_score=4.8
+after:  id=1, city='上海', intro='专业妆娘', avg_score=4.8
+```
+
+**binlog 的用途**：
+- 主从复制（从库重放 binlog 保持同步）
+- CDC（Canal 监听 binlog 同步到 ES/Redis 等）
+- 时间点恢复（全量备份 + binlog 重放恢复到任意时刻）
+- 闪回（ROW 格式记录了旧值，可以把 DELETE 反转成 INSERT 找回误删数据）
+
+**刷盘时机**由 `sync_binlog` 控制，生产环境设为 1（每次提交都 fsync）。
+
+### 三种日志对比
+
+| 日志 | 层级 | 记录内容 | 旧值 | 新值 | 用途 |
+|------|------|---------|------|------|------|
+| undo log | InnoDB | 逻辑逆操作 | ✅ | ❌ | 回滚、MVCC |
+| redo log | InnoDB | 物理页变更 | ❌ | ✅ | 崩溃恢复 |
+| binlog | Server | 行级变更 | ✅ | ✅ | 主从复制、CDC、时间点恢复 |
+
+### 事务提交完整流程（两阶段提交）
+
+以 `UPDATE merchant SET city='上海' WHERE id=1`（原 city='北京'）为例：
+
+```
+① 写 undo log
+      记录逆操作：UPDATE merchant SET city='北京' WHERE id=1
+      供回滚和 MVCC 使用
+
+② 修改 Buffer Pool（内存）
+      找到 id=1 所在的数据页，city 改成'上海'，该页变为脏页
+
+③ redo log 写入磁盘，标记 prepare 状态
+      记录物理变更（第38页偏移1024改成'上海'的字节）
+      此时事务还未正式提交
+
+④ binlog 写入磁盘
+      记录 before='北京' / after='上海' 的行级变更
+
+⑤ redo log 标记 commit 状态
+      ← 这一刻事务才算真正提交完成
+
+⑥ Buffer Pool 脏页异步刷盘（后台线程，不在事务提交的关键路径上）
+      '上海' 真正写入磁盘数据文件（.ibd）
+```
+
+**为什么 redo log 要分 prepare / commit 两步，中间夹着 binlog（两阶段提交）**：
+
+| 崩溃时机 | redo log | binlog | 恢复结果 |
+|----------|---------|--------|---------|
+| ③ 之前 | 无 | 无 | 回滚，两边一致 |
+| ③④ 之间 | prepare | 无 | 回滚（没有 binlog 视为未提交） |
+| ④⑤ 之间 | prepare | 有 | **提交**，补写 redo log commit |
+| ⑤ 之后 | commit | 有 | 正常，无需处理 |
+
+如果不用两阶段提交，先写 binlog 再写 redo log commit，binlog 写完后崩溃则 redo log 没有记录，数据回滚但 binlog 说已提交，主从/Canal 数据不一致。反过来也一样。两阶段提交保证了无论在哪个时刻崩溃，redo log 和 binlog 一定处于一致状态。
+
+**生产环境标准配置**：
+```
+innodb_flush_log_at_trx_commit = 1   # redo log 每次提交都落盘
+sync_binlog = 1                       # binlog 每次提交都落盘
+```
 ## MVCC
 * 多版本并发控制 
 * ![img_22.png](img_22.png)

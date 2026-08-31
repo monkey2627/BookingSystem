@@ -609,19 +609,111 @@ ROLLBACK;  -- 任意失败，回滚所有操作
 
 **WAL（Write-Ahead Logging）**：事务提交时先把修改写到 redo log（顺序 IO，极快），再异步刷脏页到磁盘（随机 IO）。崩溃重启时从 redo log 恢复未刷盘的修改。
 
+**redo log 记录的是物理层面的变更**（磁盘第几页第几个字节改成了什么），只记新值，不记旧值：
+
 ```
-修改 Buffer Pool（内存）→ 写 redo log（顺序 IO）→ COMMIT 返回 → 后台异步刷脏页
+LSN（日志序列号）: 1234567
+状态: prepare / commit
+表空间ID: 5   页号: 38   偏移: 1024
+新值: 0xE4B88AE6B5B7（'上海'的 UTF-8 字节）
 ```
 
-redo log 是循环写的固定大小文件（`ib_logfile0/1`），写满后从头覆盖（checkpoint 之前可覆盖）。
+redo log 是固定大小的**环形文件**（默认两个文件各 48MB 循环写），写满了从头覆盖，不会无限增长。
+
+**刷盘时机**由 `innodb_flush_log_at_trx_commit` 控制：
+
+| 值 | 行为 | 安全性 |
+|----|------|--------|
+| 1（默认） | 每次事务提交都 write + fsync 到磁盘 | 最安全，不丢数据 |
+| 2 | 每次提交 write 到 OS buffer，每秒 fsync 到磁盘 | MySQL 崩溃不丢，断电丢最多 1 秒 |
+| 0 | 每秒 write + fsync | MySQL 崩溃也可能丢最多 1 秒 |
 
 ### 6.5 undo log（原子性 + MVCC 基础）
 
-每次修改都在 undo log 中记录**逆操作**（INSERT → 对应 DELETE；UPDATE → 记录旧值），事务回滚时执行逆操作还原数据。
+**undo log 记录的是逻辑层面的逆操作**（INSERT → 对应 DELETE；UPDATE → 记录旧值），只记旧值，用于回滚和 MVCC：
+
+```
+事务ID: txn_8823
+操作:   UPDATE 的逆操作
+内容:   UPDATE merchant SET city='北京' WHERE id=1
+旧版本指针: → 上一个历史版本（MVCC 版本链）
+```
+
+两个用途：
+- **事务回滚**：执行 ROLLBACK 时照着 undo log 把数据改回去
+- **MVCC 多版本读**：事务 A 修改数据时，事务 B 来读，顺着 undo log 的旧版本指针找到修改前的值，不阻塞
 
 undo log 采用**版本链**结构：每条记录有 `roll_pointer` 指向上一版本，形成历史版本链，是 MVCC 的数据基础。
 
-### 6.6 MVCC（多版本并发控制）
+### 6.6 binlog
+
+binlog 是 MySQL Server 层的日志（不属于 InnoDB），ROW 格式下**同时记录旧值和新值**：
+
+```
+时间戳: 2026-08-31 09:05:00
+事件类型: UPDATE_ROWS_EVENT
+表: mhp.merchant
+
+before: id=1, city='北京', intro='专业妆娘', avg_score=4.8
+after:  id=1, city='上海', intro='专业妆娘', avg_score=4.8
+```
+
+**用途**：
+- 主从复制（从库重放 binlog 保持同步）
+- CDC（Canal 监听 binlog 同步到 ES/Redis 等）
+- 时间点恢复（全量备份 + binlog 重放恢复到任意时刻）
+- 闪回（ROW 格式记录了旧值，可以把 DELETE 反转成 INSERT 找回误删数据）
+
+**刷盘时机**由 `sync_binlog` 控制，生产环境设为 1（每次提交都 fsync）。
+
+### 6.7 三种日志对比与事务提交流程（两阶段提交）
+
+| 日志 | 层级 | 记录内容 | 旧值 | 新值 | 用途 |
+|------|------|---------|------|------|------|
+| undo log | InnoDB | 逻辑逆操作 | ✅ | ❌ | 回滚、MVCC |
+| redo log | InnoDB | 物理页变更 | ❌ | ✅ | 崩溃恢复 |
+| binlog | Server | 行级变更 | ✅ | ✅ | 主从复制、CDC、时间点恢复 |
+
+**完整事务提交流程**以 `UPDATE merchant SET city='上海' WHERE id=1`（原 city='北京'）为例：
+
+```
+① 写 undo log
+      记录逆操作：UPDATE merchant SET city='北京' WHERE id=1
+      供回滚和 MVCC 使用
+
+② 修改 Buffer Pool（内存）
+      找到 id=1 所在的数据页，city 改成'上海'，该页变为脏页
+
+③ redo log 写入磁盘，标记 prepare 状态
+      记录物理变更（第38页偏移1024改成'上海'的字节）
+      此时事务还未正式提交
+
+④ binlog 写入磁盘
+      记录 before='北京' / after='上海' 的行级变更
+
+⑤ redo log 标记 commit 状态
+      ← 这一刻事务才算真正提交完成
+
+⑥ Buffer Pool 脏页异步刷盘（后台线程，不在事务提交的关键路径上）
+      '上海' 真正写入磁盘数据文件（.ibd）
+```
+
+**为什么 redo log 要分 prepare / commit 两步（两阶段提交）**：
+
+| 崩溃时机 | redo log | binlog | 恢复结果 |
+|----------|---------|--------|---------|
+| ③ 之前 | 无 | 无 | 回滚，两边一致 |
+| ③④ 之间 | prepare | 无 | 回滚（没有 binlog 视为未提交） |
+| ④⑤ 之间 | prepare | 有 | **提交**，补写 redo log commit |
+| ⑤ 之后 | commit | 有 | 正常，无需处理 |
+
+**生产环境标准配置**：
+```sql
+innodb_flush_log_at_trx_commit = 1   -- redo log 每次提交都落盘
+sync_binlog = 1                       -- binlog 每次提交都落盘
+```
+
+### 6.8 MVCC（多版本并发控制）
 
 **作用**：不加锁让读操作看到一致历史快照，实现**读写不阻塞**。
 
@@ -646,7 +738,7 @@ min_trx_id <= trx_id < max_trx_id → 在 m_ids 中 → 未提交，不可见；
 
 沿版本链从最新往旧遍历，**返回第一个可见版本**。
 
-### 6.7 四种隔离级别详解
+### 6.9 四种隔离级别详解
 
 隔离级别本质是两件事的预设组合：**ReadView 生成时机**（MVCC 行为）+ **当前读自动加什么锁**。
 
@@ -753,6 +845,105 @@ SELECT @@transaction_isolation;                                       -- 查看�
 SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;              -- 设置会话
 SET GLOBAL TRANSACTION ISOLATION LEVEL READ COMMITTED;                -- 设置全局
 ```
+
+### 6.10 一条 DML 语句的完整生命周期
+
+以 `UPDATE merchant SET city='上海' WHERE id=1`（原 city='北京'）为主线，串联 Server 层与 InnoDB 层所有组件。
+
+**Server 层（SQL 处理）**
+
+```
+① 连接器
+      验证用户名/密码，检查库级权限，建立连接
+
+② 解析器（Parser）
+      词法分析：把 SQL 字符串切成 Token（UPDATE / merchant / SET / city ...）
+      语法分析：构造语法树，检查语法是否合法
+
+③ 预处理器
+      检查表名、列名是否存在，验证用户对该表有无操作权限
+
+④ 优化器（Optimizer）
+      生成执行计划：选择索引，决定 JOIN 顺序
+      本例：id 是主键，等值查询，直接走聚集索引
+
+⑤ 执行器（Executor）
+      调用 InnoDB 存储引擎接口，按执行计划驱动数据读写
+```
+
+**InnoDB 层（存储引擎）**
+
+```
+⑥ 当前读 —— 找到目标行
+      通过聚集索引定位 id=1 的数据页
+        命中 Buffer Pool → 直接使用
+        未命中         → 从磁盘 .ibd 文件读入 Buffer Pool
+
+⑦ 加锁
+      对 id=1 这行加行级 X 锁
+      （RR 级别默认临键锁；唯一索引等值命中存在行 → 退化为纯行锁）
+      在表上加意向排他锁（IX）
+
+⑧ 写 undo log
+      记录逆操作：UPDATE merchant SET city='北京' WHERE id=1
+      供事务回滚和 MVCC 版本链使用
+
+⑨ 修改 Buffer Pool
+      将 id=1 数据页中 city 字段改为'上海'，该页标记为脏页
+      此时磁盘上数据仍是'北京'
+
+⑩ redo log 写入 Log Buffer → 刷盘，标记 prepare
+      记录物理变更（第 N 页偏移 M 字节改为'上海'的字节）
+      prepare 状态：事务尚未正式提交
+
+⑪ binlog 写入磁盘
+      ROW 格式记录 before='北京' / after='上海' 行级变更
+
+⑫ redo log 标记 commit
+      ← 这一刻事务正式提交，客户端收到成功响应，行锁释放
+
+⑬ 后台 Page Cleaner 线程异步刷脏页（不在提交关键路径上）
+      将 Buffer Pool 中脏页写入 .ibd 磁盘文件
+      刷盘完成后 redo log 对应位置的 checkpoint 推进，该段日志可被覆盖
+```
+
+**崩溃后如何恢复**
+
+```
+重启 → 扫描 redo log
+  ├─ redo log 有 commit                 → 重放 redo log 补刷未落盘的脏页
+  ├─ redo log 有 prepare + binlog 有记录 → 视为已提交，同上
+  └─ redo log 只有 prepare，binlog 无记录 → 视为未提交，用 undo log 回滚
+```
+
+**SELECT 快照读路径（对比）**
+
+```
+① ~ ⑤ Server 层相同
+
+⑥ 生成 ReadView
+      RR：整个事务内第一次快照读时生成，后续复用
+      RC：每次快照读重新生成
+
+⑦ 在 Buffer Pool 中找到目标行（或从磁盘加载）
+
+⑧ 沿 undo log 版本链从最新往旧遍历
+      返回第一个对当前 ReadView 可见的版本
+      全程不加任何锁，读写互不阻塞
+```
+
+**各层职责一览**
+
+| 组件 | 层级 | 职责 |
+|------|------|------|
+| 连接器 / 解析器 / 优化器 | Server | SQL 解析、权限校验、执行计划 |
+| 执行器 | Server | 驱动存储引擎接口，汇聚结果集返回客户端 |
+| Buffer Pool | InnoDB 内存 | 缓存数据页，读写都先过这里 |
+| undo log | InnoDB | 记录旧值，支持回滚和 MVCC 版本链 |
+| redo log | InnoDB | 记录物理新值，WAL + 两阶段提交保证持久性 |
+| binlog | Server | 记录行级 before/after，主从 / CDC / 时间点恢复 |
+| 锁（行锁 / 间隙锁） | InnoDB | 并发写隔离，防止脏写和幻读 |
+| MVCC / ReadView | InnoDB | 并发读隔离，读不阻塞写 |
 
 ---
 
