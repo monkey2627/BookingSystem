@@ -148,10 +148,8 @@ import { ElMessageBox, ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { bookingApi, reviewApi, complaintApi } from '@/api'
 import { BOOKING_STATUS_MAP, SERVICE_TYPE_MAP, type BookingVO } from '@/types'
-import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
-const userStore = useUserStore()
 
 const isMerchantView = computed(() => route.name === 'receivedBookings')
 

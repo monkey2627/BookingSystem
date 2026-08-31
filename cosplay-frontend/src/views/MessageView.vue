@@ -61,8 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, nextTick, onMounted } from 'vue'
 import { messageApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import { useWebSocket } from '@/composables/useWebSocket'

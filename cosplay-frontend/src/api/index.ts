@@ -2,7 +2,7 @@ import request from '@/utils/request'
 import type {
   UserInfo, MerchantVO, ScheduleVO, BookingVO, CursorPage,
   ReviewVO, RushResultVO, PostVO, RushRecordVO, MerchantStatsVO,
-  MessageVO, ConversationVO, QuestionnaireVO, PageResult
+  MessageVO, ConversationVO, QuestionnaireVO
 } from '@/types'
 
 // ── 用户 ──────────────────────────────────────────────────

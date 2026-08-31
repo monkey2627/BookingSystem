@@ -62,9 +62,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { merchantApi } from '@/api'
 import { SERVICE_TYPE_MAP } from '@/types'
-import { useUserStore } from '@/stores/user'
 const router = useRouter()
-const userStore = useUserStore()
 
 const CITIES = ['北京', '上海', '广州', '深圳', '成都', '杭州', '武汉', '南京', '西安', '重庆']
 
@@ -111,7 +109,6 @@ async function handleSave() {
   try {
     await merchantApi.updateInfo(form.value)
     ElMessage.success('保存成功')
-    userStore.setHasMerchantProfile(true)
   } finally {
     saving.value = false
   }

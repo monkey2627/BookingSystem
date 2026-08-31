@@ -90,7 +90,7 @@ import { useRouter } from 'vue-router'
 import { Plus, Star, StarFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, UploadUserFile } from 'element-plus'
-import { postApi, followApi, uploadApi } from '@/api'
+import { postApi, uploadApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import type { PostVO } from '@/types'
 

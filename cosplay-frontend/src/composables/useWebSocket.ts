@@ -54,7 +54,7 @@ export function useWebSocket() {
           // 订阅服务端推送给当前用户的消息
           // /user/queue/messages 是 Spring 的用户目的地，
           // 只有当前登录用户能收到发给自己的消息
-          stompClient!.subscribe('/user/queue/messages', (frame) => {
+          stompClient!.subscribe('/user/queue/messages', (frame: any) => {
             try {
               const msg = JSON.parse(frame.body)
               unreadCount.value++
@@ -63,7 +63,7 @@ export function useWebSocket() {
           })
 
           // 订阅系统通知（订单状态变更等）
-          stompClient!.subscribe('/user/queue/notify', (frame) => {
+          stompClient!.subscribe('/user/queue/notify', (frame: any) => {
             try {
               const notify = JSON.parse(frame.body)
               unreadCount.value++
@@ -77,7 +77,7 @@ export function useWebSocket() {
           resolve()
         },
 
-        onStompError: (frame) => {
+        onStompError: (frame: any) => {
           console.error('STOMP error', frame)
           connectPromise = null
           reject(new Error(frame.headers.message))
