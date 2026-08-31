@@ -18,10 +18,10 @@
 
       <!-- 图例 -->
       <div class="legend">
-        <span class="legend-item"><span class="dot" style="background:#67c23a"/> 空闲可预约</span>
-        <span class="legend-item"><span class="dot" style="background:#e6a23c"/> 已有预约</span>
-        <span class="legend-item"><span class="dot" style="background:#409eff"/> 抢档期</span>
-        <span class="legend-item"><span class="dot" style="background:#909399"/> 不可用</span>
+        <span class="legend-item"><span class="dot" style="background:#67c23a"></span> 空闲可预约</span>
+        <span class="legend-item"><span class="dot" style="background:#e6a23c"></span> 已有预约</span>
+        <span class="legend-item"><span class="dot" style="background:#409eff"></span> 抢档期</span>
+        <span class="legend-item"><span class="dot" style="background:#909399"></span> 不可用</span>
       </div>
 
       <div class="week-header">

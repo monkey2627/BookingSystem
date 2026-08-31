@@ -62,10 +62,10 @@
         <!-- 图例 -->
         <div class="legend">
           <span v-for="(cfg, status) in SCHEDULE_STATUS_MAP" :key="status" class="legend-item">
-            <span class="legend-dot" :style="{ background: cfg.color }" />{{ cfg.label }}
+            <span class="legend-dot" :style="{ background: cfg.color }"></span>{{ cfg.label }}
           </span>
           <span class="legend-item">
-            <span class="legend-dot" style="background: #c0c4cc" />无档期
+            <span class="legend-dot" style="background: #c0c4cc"></span>无档期
           </span>
         </div>
 
