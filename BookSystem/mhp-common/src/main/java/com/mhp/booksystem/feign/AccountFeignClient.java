@@ -2,7 +2,6 @@ package com.mhp.booksystem.feign;
 
 import com.mhp.booksystem.common.Result;
 import com.mhp.booksystem.dto.feign.MerchantDTO;
-import com.mhp.booksystem.dto.feign.MerchantScoreUpdateDTO;
 import com.mhp.booksystem.dto.feign.UserDTO;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.*;
@@ -12,8 +11,8 @@ import java.util.List;
 /**
  * 声明式 HTTP 客户端 — 对应 mhp-account 服务的内部接口。
  *
- * 调用方：mhp-booking（预约时验证商家身份、取消时通知商家）
- *         mhp-social（展示用户/商家信息、评价后更新评分）
+ * 调用方：mhp-booking（取消预约时拼装商家信息）
+ *         mhp-social（展示用户/商家信息）
  *
  * 路由：Feign 通过 name="mhp-account" 从 Nacos 服务注册表找到实例，
  *       负载均衡后直接调用目标服务，不经过 Gateway，避免多一跳和额外鉴权。
@@ -48,11 +47,4 @@ public interface AccountFeignClient {
     @GetMapping("/internal/merchant/batch")
     Result<List<MerchantDTO>> batchGetMerchants(@RequestParam("ids") List<Long> ids);
 
-    /**
-     * 更新商家平均评分和评价数量。
-     * 在 ReviewServiceImpl.create() 评价成功后调用，
-     * 由 mhp-social 跨服务写 mhp-account 的数据（唯一一处写操作）。
-     */
-    @PutMapping("/internal/merchant/{id}/score")
-    Result<Void> updateMerchantScore(@PathVariable("id") Long id, @RequestBody MerchantScoreUpdateDTO dto);
 }
