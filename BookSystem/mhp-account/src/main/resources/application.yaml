@@ -61,4 +61,5 @@ dubbo:
     name: tri       # Triple 协议（HTTP/2），Dubbo3 推荐，与 gRPC 互通
     port: -1        # 随机端口，避免与 Spring Boot HTTP 8081 冲突
   registry:
-    address: nacos://127.0.0.1:8848  # 复用已有 Nacos，不引入新中间件
+    address: nacos://127.0.0.1:8848
+    group: DUBBO    # 独立 group，避免 Dubbo 实例混入 Spring Cloud DEFAULT_GROUP 被 Gateway 轮询

@@ -8,6 +8,13 @@ spring:
     nacos:
       discovery:
         server-addr: localhost:8848
+    loadbalancer:
+      eager-load:
+        enabled: true
+        clients:
+          - mhp-account
+          - mhp-booking
+          - mhp-social
     gateway:
       discovery:
         locator:
