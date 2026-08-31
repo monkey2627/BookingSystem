@@ -48,8 +48,8 @@ request.interceptors.response.use(
     }
 
     // 其他业务错误：弹出后端返回的错误信息
-    ElMessage.error(res.msg || res.message || '操作失败')
-    return Promise.reject(new Error(res.msg || res.message))
+    ElMessage.error(res.message || '操作失败')
+    return Promise.reject(new Error(res.message))
   },
   error => {
     // 网络错误、超时等 HTTP 层面的错误

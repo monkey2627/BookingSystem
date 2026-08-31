@@ -178,17 +178,70 @@ ServiceInstance {
 
 ### 核心概念三级结构
 
+Nacos 的三级结构同时适用于**服务注册**和**配置中心**两个场景：
+
 ```
-Namespace（命名空间）
-  └── Group（组）
-        └── DataId（配置文件名）
+Namespace（命名空间）—— 最粗粒度，通常用于环境隔离（dev/test/prod）
+  └── Group（分组）—— 中间粒度，用于同一环境内不同项目或组件的隔离
+        └── Service / DataId —— 实际注册的服务名 或 配置文件名
 ```
 
-| 层级 | 用途 | 示例 |
-|------|------|------|
-| Namespace | 区分环境（dev/test/prod） | `dev`、`production` |
-| Group | 区分项目或业务模块 | `DEFAULT_GROUP`、`MHP_GROUP` |
-| DataId | 具体的配置文件 | `mhp-account.yaml` |
+| 层级 | 服务注册场景 | 配置中心场景 |
+|------|------------|------------|
+| Namespace | 区分部署环境 | 区分部署环境 |
+| Group | 区分注册来源（Spring Cloud / Dubbo）| 区分项目或业务模块 |
+| Service / DataId | 服务名（mhp-account）| 配置文件名（mhp-account.yaml）|
+
+**每次向 Nacos 注册或查询，都必须携带 Group 参数，Nacos 严格按 Group 隔离——不同 Group 下的同名服务完全独立，互不可见。**
+
+### Group 隔离的实际意义：Dubbo 与 Spring Cloud 共用 Nacos 的冲突
+
+项目同时使用 Dubbo（RPC）和 Spring Cloud（HTTP），两者都把 Nacos 当注册中心，若不配置 Group 隔离，会产生严重 Bug：
+
+**问题现象**：所有接口第一次请求必定 404，第二次才成功，固定交替。
+
+**根本原因**：
+
+```
+Nacos DEFAULT_GROUP / mhp-account 的实例列表：
+  ├── 10.2.0.6:8081   ← Spring Cloud 注册的 HTTP 实例
+  └── 172.18.0.1:50051 ← Dubbo 注册的 Triple 实例（未指定 group，默认也是 DEFAULT_GROUP）
+```
+
+Gateway 的 Spring Cloud LoadBalancer 在 `DEFAULT_GROUP` 里看到两个实例，按 RoundRobin 轮询：
+
+```
+请求1 → 50051（Dubbo Triple 端口，不接受 HTTP）→ 404
+请求2 → 8081（Spring Boot HTTP）→ 成功
+请求3 → 50051 → 404
+请求4 → 8081 → 成功 ...
+```
+
+**修复方法**：给 Dubbo 指定独立 Group，与 Spring Cloud 的 `DEFAULT_GROUP` 隔离：
+
+```yaml
+# 所有微服务的 dubbo 配置（提供者和消费者必须用同一个 group）
+dubbo:
+  registry:
+    address: nacos://127.0.0.1:8848
+    group: DUBBO    # 与 Spring Cloud 的 DEFAULT_GROUP 隔离
+```
+
+修复后的隔离效果：
+
+```
+DEFAULT_GROUP / mhp-account → [8081]    ← Gateway 只看这里，只看到 HTTP 实例 ✅
+DUBBO Group   / mhp-account → [50051]   ← Dubbo Consumer 只看这里，找到 RPC 实例 ✅
+```
+
+**各组件默认使用的 Group：**
+
+| 组件 | 默认 Group | 配置项 |
+|------|-----------|--------|
+| Spring Cloud Nacos Discovery（服务注册）| `DEFAULT_GROUP` | `spring.cloud.nacos.discovery.group` |
+| Spring Cloud Gateway（查询实例）| `DEFAULT_GROUP` | 同上，跟随 Discovery 配置 |
+| Dubbo Registry | `DEFAULT_GROUP` | `dubbo.registry.group` |
+| Nacos Config Center（配置中心）| `DEFAULT_GROUP` | `spring.cloud.nacos.config.group` |
 
 ### 接入配置中心
 
