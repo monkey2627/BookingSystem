@@ -50,68 +50,66 @@
       width="480px" @close="resetCreate">
 
       <!-- 已有档期：显示操作 -->
-      <template v-if="selectedSchedule">
-        <div class="schedule-detail">
-          <el-descriptions :column="1" border>
-            <el-descriptions-item label="日期">{{ selectedSchedule.date }}</el-descriptions-item>
-            <el-descriptions-item label="时间段">{{ selectedSchedule.timeSlot || '全天' }}</el-descriptions-item>
-            <el-descriptions-item label="模式">
-              {{ selectedSchedule.bookType === 0 ? '直接预约' : '抢档期' }}
-            </el-descriptions-item>
-            <el-descriptions-item label="状态">
-              <el-tag :type="statusType(selectedSchedule.status)">
-                {{ ['空闲','已预约','不可用'][selectedSchedule.status] }}
-              </el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item v-if="selectedSchedule.bookType === 1" label="当前排队">
-              {{ selectedSchedule.currentQueueSize }} 人
-            </el-descriptions-item>
-          </el-descriptions>
+      <div v-if="selectedSchedule" class="schedule-detail">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="日期">{{ selectedSchedule.date }}</el-descriptions-item>
+          <el-descriptions-item label="时间段">{{ selectedSchedule.timeSlot || '全天' }}</el-descriptions-item>
+          <el-descriptions-item label="模式">
+            {{ selectedSchedule.bookType === 0 ? '直接预约' : '抢档期' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="statusType(selectedSchedule.status)">
+              {{ ['空闲','已预约','不可用'][selectedSchedule.status] }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="selectedSchedule.bookType === 1" label="当前排队">
+            {{ selectedSchedule.currentQueueSize }} 人
+          </el-descriptions-item>
+        </el-descriptions>
 
-          <!-- 抢档期查看队列按钮 -->
-          <el-button v-if="selectedSchedule.bookType === 1" class="queue-btn"
-            type="primary" plain @click="openQueueDrawer(selectedSchedule)">
-            查看排队名单（{{ selectedSchedule.currentQueueSize }}人）
-          </el-button>
-        </div>
+        <!-- 抢档期查看队列按钮 -->
+        <el-button v-if="selectedSchedule.bookType === 1" class="queue-btn"
+          type="primary" plain @click="openQueueDrawer(selectedSchedule)">
+          查看排队名单（{{ selectedSchedule.currentQueueSize }}人）
+        </el-button>
+      </div>
 
-        <template #footer>
+      <!-- 新建档期表单 -->
+      <el-form v-else :model="createForm" :rules="createRules" ref="createFormRef" label-width="90px">
+        <el-form-item label="服务类型" prop="serviceType">
+          <el-select v-model="createForm.serviceType" placeholder="请选择服务类型" style="width:100%">
+            <el-option v-for="(name, val) in SERVICE_TYPE_MAP" :key="val" :label="name" :value="Number(val)" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="时间段" prop="timeSlot">
+          <el-input v-model="createForm.timeSlot" placeholder="如 09:00-12:00，留空表示全天" />
+        </el-form-item>
+        <el-form-item label="预约模式" prop="bookType">
+          <el-radio-group v-model="createForm.bookType">
+            <el-radio :value="0">直接预约</el-radio>
+            <el-radio :value="1">抢档期</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <template v-if="createForm.bookType === 1">
+          <el-form-item label="开放时间" prop="rushOpenTime">
+            <el-date-picker v-model="createForm.rushOpenTime" type="datetime"
+              placeholder="抢档期开放时间" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="最大排队" prop="maxQueueSize">
+            <el-input-number v-model="createForm.maxQueueSize" :min="1" :max="100" />
+          </el-form-item>
+        </template>
+      </el-form>
+
+      <template #footer>
+        <template v-if="selectedSchedule">
           <el-button v-if="selectedSchedule.status === 0" type="danger" plain
             :loading="deleteLoading" @click="handleDelete(selectedSchedule.id)">
             删除档期
           </el-button>
           <el-button @click="createDialogVisible = false">关闭</el-button>
         </template>
-      </template>
-
-      <!-- 新建档期表单 -->
-      <template v-else>
-        <el-form :model="createForm" :rules="createRules" ref="createFormRef" label-width="90px">
-          <el-form-item label="服务类型" prop="serviceType">
-            <el-select v-model="createForm.serviceType" placeholder="请选择服务类型" style="width:100%">
-              <el-option v-for="(name, val) in SERVICE_TYPE_MAP" :key="val" :label="name" :value="Number(val)" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="时间段" prop="timeSlot">
-            <el-input v-model="createForm.timeSlot" placeholder="如 09:00-12:00，留空表示全天" />
-          </el-form-item>
-          <el-form-item label="预约模式" prop="bookType">
-            <el-radio-group v-model="createForm.bookType">
-              <el-radio :value="0">直接预约</el-radio>
-              <el-radio :value="1">抢档期</el-radio>
-            </el-radio-group>
-          </el-form-item>
-          <template v-if="createForm.bookType === 1">
-            <el-form-item label="开放时间" prop="rushOpenTime">
-              <el-date-picker v-model="createForm.rushOpenTime" type="datetime"
-                placeholder="抢档期开放时间" style="width:100%" />
-            </el-form-item>
-            <el-form-item label="最大排队" prop="maxQueueSize">
-              <el-input-number v-model="createForm.maxQueueSize" :min="1" :max="100" />
-            </el-form-item>
-          </template>
-        </el-form>
-        <template #footer>
+        <template v-else>
           <el-button @click="createDialogVisible = false">取消</el-button>
           <el-button type="primary" :loading="createLoading" @click="handleCreate">创建</el-button>
         </template>
