@@ -2,7 +2,7 @@ import request from '@/utils/request'
 import type {
   UserInfo, MerchantVO, ScheduleVO, BookingVO, CursorPage,
   ReviewVO, RushResultVO, PostVO, RushRecordVO, MerchantStatsVO,
-  MessageVO, ConversationVO, QuestionnaireVO, RushLobbyItemVO
+  MessageVO, ConversationVO, QuestionnaireVO, RushLobbyItemVO, ComplaintVO
 } from '@/types'
 
 // ── 用户 ──────────────────────────────────────────────────
@@ -26,6 +26,7 @@ export const merchantApi = {
     serviceTypes: number[]; city: string; intro: string;
     alipayLink: string; xianyuLink: string; xiaohongshuLink: string; weiboLink: string;
     priceMin: number; priceMax: number; bookingNotice: string;
+    scheduleVisibility: number;
   }>) => request.put<any, void>('/merchant/info', data),
 
   getMyInfo: () =>
@@ -172,6 +173,9 @@ export const rushApi = {
 export const complaintApi = {
   submit: (data: { orderId: number; reason: string; evidence?: string[] }) =>
     request.post<any, void>('/complaint', data),
+
+  listReceived: () =>
+    request.get<any, ComplaintVO[]>('/complaint/received'),
 }
 
 // ── 图片上传 ──────────────────────────────────────────────

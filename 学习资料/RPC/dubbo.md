@@ -1028,10 +1028,12 @@ booking 尝试连接 172.18.0.1:PORT
 
 **修复**
 
-**不能用 `protocol.host`**，原因见下方"踩坑记录"。正确做法是用 `DUBBO_IP_TO_REGISTRY` 环境变量，只覆盖注册地址，不影响绑定地址：
+在所有 Dubbo 服务的 `application.yaml` 中显式指定 `protocol.host`：
 
-```bash
-DUBBO_IP_TO_REGISTRY=10.2.0.6 java -jar mhp-account.jar
+```yaml
+dubbo:
+  protocol:
+    host: 10.2.0.6  # 固定注册到 Nacos 的 IP，防止选中 Docker 网桥地址
 ```
 
 同时清掉 Dubbo 的磁盘缓存，防止 Consumer 使用旧地址：
@@ -1043,7 +1045,7 @@ rm -f ~/.dubbo/dubbo-registry-*.cache
 修复后的调用链：
 
 ```
-account 注册到 Nacos："我在 10.2.0.6:PORT"（绑定地址仍为 0.0.0.0）
+account 注册到 Nacos："我在 10.2.0.6:PORT"
 
 booking 问 Nacos → 拿到 10.2.0.6:PORT → 连接成功
 ```
@@ -1054,24 +1056,105 @@ booking 问 Nacos → 拿到 10.2.0.6:PORT → 连接成功
 - `62.234.139.139`（公网 IP）：流量绕出公网再回来，延迟高且可能被防火墙拦截
 - `10.2.0.6`（内网 IP）：同 VPC 内直连，延迟低，多机部署时也能正常工作，是正确选择
 
-**踩坑：`protocol.host` 会同时影响绑定地址，导致服务无法注册**
+**`protocol.host` 同时控制绑定地址**
 
-第一次尝试用 `protocol.host: 10.2.0.6` 修复，结果更糟：
+`protocol.host` 同时影响两件事：注册到 Nacos 的 IP，以及 Dubbo 服务器 socket 的绑定地址。设置后 Dubbo 绑定到 `10.2.0.6:PORT` 而非 `0.0.0.0:PORT`。
 
-```yaml
-# 错误写法
-dubbo:
-  protocol:
-    host: 10.2.0.6  # ← 看起来只是改注册地址，实际上还改了绑定地址
+本项目没有问题，因为 `10.2.0.6` 是服务器的真实内网网卡，可以正常绑定。如果指定一个机器上不存在的 IP，才会导致绑定失败、服务无法启动。另一种只改注册 IP 不影响绑定地址的方式是 `DUBBO_IP_TO_REGISTRY=10.2.0.6` 环境变量，对本项目来说没有必要。
+
+| 配置方式 | 影响注册地址 | 影响绑定地址 | 适用场景 |
+|---|---|---|---|
+| `protocol.host: 10.2.0.6` | ✅ | ✅（绑定到该 IP） | 该 IP 是本机真实网卡时使用 |
+| `DUBBO_IP_TO_REGISTRY=10.2.0.6` | ✅ | ❌（继续绑定 0.0.0.0） | 需要保持监听所有网卡时使用 |
+
+**排查过程中的误判：Nacos Group 和 Namespace 的区别**
+
+修完后去 Nacos 查询时，误用了 `namespaceId=DUBBO`，而实际上 DUBBO 是 Group 名，不是 Namespace。Nacos 返回空实例列表，一度误以为服务没有注册，并因此认为是 `protocol.host` 导致注册失败。改用正确参数 `groupName=DUBBO` 查询，才看到 `10.2.0.6:PORT` 已正确注册。
+
+| 概念 | 作用 | 本项目的值 |
+|---|---|---|
+| Namespace | 环境隔离（dev / staging / prod），不同 namespace 完全隔离 | 默认 `public` |
+| Group | 业务隔离，同一 namespace 内按 group 分类 | Dubbo 服务用 `DUBBO`，Spring Cloud 服务用 `DEFAULT_GROUP` |
+
+---
+
+### Dubbo 3.x 应用级发现：MetadataService 协议不匹配导致 RPC 全量失败
+
+**现象**
+
+服务启动正常，Nacos 显示 booking 和 account 均已注册，但所有从 booking 到 account 的 Dubbo 调用必现超时 500，account 日志中出现无法识别协议的错误：
+
+```
+Exception caught: cannot recognize the prefix, wrong content with magic flag
 ```
 
-`protocol.host` 同时控制两件事：
-1. 注册到 Nacos 的 IP（想改的）
-2. Dubbo 服务器 socket 的绑定地址（不该动的）
+**根因：Dubbo 3.x 应用级发现的两阶段机制**
 
-Dubbo 原本绑定 `0.0.0.0`（监听所有网卡），改成绑定特定 IP 后，如果该 IP 在当前系统上绑定异常，Dubbo 服务端口无法启动，导致服务根本没有注册到 Nacos（`hosts: []`）。Consumer 拿不到新地址，转而使用磁盘缓存里的旧地址（上一次运行的随机端口），连过去协议对不上，出现 `Cannot recognize protocol` 错误。
+Dubbo 3.x 的应用级注册中，Nacos 只存储"应用实例的 IP:Port"，**不存储接口信息**（方法名、参数类型、序列化方式等）。Consumer 启动时需要额外拉取一份接口元数据，才能构建 Invoker（调用代理），整个过程分两阶段：
 
-| 配置方式 | 影响注册地址 | 影响绑定地址 | 结论 |
-|---|---|---|---|
-| `protocol.host: 10.2.0.6` | ✅ | ✅（危险） | 不要用 |
-| `DUBBO_IP_TO_REGISTRY=10.2.0.6` | ✅ | ❌（安全） | 正确方式 |
+```
+第一阶段（初始化，一次性）：
+  booking 启动 → 向 Nacos 查询 mhp-account 的实例地址
+  → 得到 IP:Port，但不知道 account 暴露了哪些接口
+  → booking 向 account 的 MetadataService 端口发请求："你有哪些接口？"
+  → 拿到接口元数据 → 在本地构建 Invoker
+
+第二阶段（运行时，每次业务调用）：
+  booking 调用 rpcMerchantService.xxx()
+  → Invoker 已建立 → 直接走 Triple 发到 account:50051
+```
+
+问题出在第一阶段：MetadataService 默认使用 **Dubbo 二进制协议**（魔数 `0xDABB`）通信，而 account 只开了 **Triple（HTTP/2）** 端口，完全不认识这个魔数，直接拒绝。booking 的 Invoker 永远建不起来，所有 RPC 调用超时，第二阶段根本到不了。
+
+```
+booking → [Dubbo 二进制协议 0xDABB] → account:50051（Triple 端口）
+                                        account: 无法识别魔数 → 拒绝 → 报错
+                                        booking: Invoker 构建失败 → 所有调用超时
+```
+
+**为什么不用注册中心（直连模式）或 Dubbo 2.x 不会有此问题**
+
+- **直连模式**：地址硬编码，不需要服务发现，也不需要 MetadataService，Consumer 直接连 Triple 端口，无此问题
+- **Dubbo 2.x 接口级注册**：接口元数据全部存在 Nacos 的 URL 参数里，Consumer 直接从 Nacos 读，不需要单独连 MetadataService 端口，无此问题
+- **本项目触发的条件**：Dubbo 3.x 应用级注册（默认）+ Provider 只开 Triple + 未配置 `metadata-type: remote`，三者同时满足
+
+**修复**
+
+在所有服务（Provider 和 Consumer 两侧）的 `application.yaml` 中增加：
+
+```yaml
+dubbo:
+  application:
+    metadata-type: remote   # 元数据存入 Nacos，Consumer 直接从 Nacos 拉，不走 Provider 的 MetadataService 端口
+  metadata-report:
+    address: nacos://127.0.0.1:8848
+    group: DUBBO
+```
+
+`metadata-type: remote` 改变了元数据的流向：Provider 启动时**主动把接口元数据推到 Nacos**，Consumer 启动时**从 Nacos 拉取**，完全绕过 Provider 的 MetadataService 端口，协议不匹配的问题消失。
+
+```
+修复后的流程：
+
+第一阶段：
+  account 启动 → 把接口元数据推到 Nacos（metadata-type: remote）
+  booking 启动 → 从 Nacos 拉接口元数据 → 构建 Invoker（不再连 account 的 MetadataService 端口）
+
+第二阶段（不变）：
+  booking → [Triple] → account:PORT → 正常调用
+```
+
+**另一种解法：Provider 同时开 Dubbo 二进制协议端口**
+
+```yaml
+dubbo:
+  protocols:
+    tri:
+      name: tri
+      port: -1
+    dubbo:
+      name: dubbo
+      port: 20880   # MetadataService 默认绑到这个端口
+```
+
+这样 MetadataService 有了可用的 Dubbo 二进制端口，Consumer 能正常拉取元数据。适合需要兼容 Dubbo 2.x 旧 Consumer 的场景，代价是每个服务多开一个端口。本项目选 `metadata-type: remote`，端口更少，且 Nacos 已是强依赖。

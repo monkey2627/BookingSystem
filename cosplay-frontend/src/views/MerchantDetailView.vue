@@ -99,12 +99,14 @@
             @click="day && handleDayClick(day.dateStr)">
             <template v-if="day">
               <span class="day-num">{{ day.num }}</span>
-              <!-- 抢档期倒计时：还未开放时显示倒计时 -->
-              <span v-if="scheduleMap[day.dateStr] && isRushPending(scheduleMap[day.dateStr])"
-                class="rush-countdown">{{ formatCountdown(scheduleMap[day.dateStr]) }}</span>
-              <!-- 普通状态点 -->
-              <span v-else-if="scheduleMap[day.dateStr]" class="day-dot"
-                :style="{ background: SCHEDULE_STATUS_MAP[scheduleMap[day.dateStr].status]?.color }" />
+              <!-- 多档期：显示数量或单个状态点 -->
+              <template v-if="scheduleMap[day.dateStr]?.length">
+                <span v-if="scheduleMap[day.dateStr].some(s => isRushPending(s))"
+                  class="rush-countdown">{{ formatCountdown(scheduleMap[day.dateStr].find(s => isRushPending(s))!) }}</span>
+                <span v-else class="day-dot"
+                  :style="{ background: SCHEDULE_STATUS_MAP[scheduleMap[day.dateStr].find(s => s.status === 0)?.status ?? scheduleMap[day.dateStr][0].status]?.color }" />
+                <span v-if="scheduleMap[day.dateStr].length > 1" class="multi-badge">{{ scheduleMap[day.dateStr].length }}</span>
+              </template>
             </template>
           </div>
         </div>
@@ -196,18 +198,38 @@
       </div>
     </el-card>
 
+    <!-- ── 多档选择弹窗（同一天有多个档期时） ── -->
+    <el-dialog v-model="dayPickerVisible" title="选择档期" width="400px">
+      <div v-for="s in dayPickerSchedules" :key="s.id" class="picker-row"
+        :class="{ 'picker-row--disabled': s.status !== 0 }"
+        @click="openScheduleDialog(s)">
+        <div class="picker-time">{{ s.timeSlot || '全天' }}</div>
+        <el-tag :type="s.status === 0 ? 'success' : s.status === 1 ? 'warning' : 'info'" size="small">
+          {{ s.status === 0 ? '可预约' : s.status === 1 ? '已预约' : '不可用' }}
+        </el-tag>
+      </div>
+    </el-dialog>
+
     <!-- ── 预约对话框 ── -->
-    <el-dialog v-model="bookDialogVisible" :title="selectedSchedule?.bookType === 1 ? '参与抢档期' : '预约档期'"
+    <el-dialog v-model="bookDialogVisible"
+      :title="selectedSchedule?.status !== 0 ? '档期信息' : selectedSchedule?.bookType === 1 ? '参与抢档期' : '预约档期'"
       width="480px">
       <div v-if="selectedSchedule" class="book-dialog-content">
         <p><strong>日期：</strong>{{ selectedSchedule.date }}</p>
-        <p><strong>时段：</strong>{{ selectedSchedule.timeSlot }}</p>
+        <p><strong>时段：</strong>{{ selectedSchedule.timeSlot || '全天' }}</p>
+
+        <!-- 已预约/不可用：仅展示状态 -->
+        <template v-if="selectedSchedule.status !== 0">
+          <el-alert
+            :type="selectedSchedule.status === 1 ? 'warning' : 'info'"
+            :title="selectedSchedule.status === 1 ? '该档期已被预约，无法再次预约' : '该档期暂不开放预约'"
+            :closable="false" show-icon style="margin-top: 12px" />
+        </template>
 
         <!-- 直接预约：填写备注 + 问卷 -->
-        <template v-if="selectedSchedule.bookType === 0">
+        <template v-else-if="selectedSchedule.bookType === 0">
           <el-input v-model="remark" type="textarea" placeholder="备注（可选）" :rows="3" style="margin-top: 12px" />
 
-          <!-- 问卷：商家有问卷且必填时展示 -->
           <template v-if="questionnaire">
             <el-divider>{{ questionnaire.title }}</el-divider>
             <el-form :model="questionnaireAnswer" label-position="top">
@@ -236,8 +258,8 @@
       </div>
 
       <template #footer>
-        <el-button @click="bookDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="bookLoading"
+        <el-button @click="bookDialogVisible = false">关闭</el-button>
+        <el-button v-if="selectedSchedule?.status === 0" type="primary" :loading="bookLoading"
           @click="selectedSchedule?.bookType === 1 ? handleRush() : handleBook()">
           {{ selectedSchedule?.bookType === 1 ? '参与抢档期' : '确认预约' }}
         </el-button>
@@ -272,10 +294,13 @@ let timerInterval: ReturnType<typeof setInterval> | null = null
 const now = new Date()
 const currentMonth = ref(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
 
-// 把档期列表转成 Map<dateStr, ScheduleVO>，方便日历格子 O(1) 查询
-const scheduleMap = computed<Record<string, ScheduleVO>>(() => {
-  const map: Record<string, ScheduleVO> = {}
-  schedules.value.forEach(s => { map[s.date] = s })
+// 每天可有多个档期，按日期分组
+const scheduleMap = computed<Record<string, ScheduleVO[]>>(() => {
+  const map: Record<string, ScheduleVO[]> = {}
+  schedules.value.forEach(s => {
+    if (!map[s.date]) map[s.date] = []
+    map[s.date].push(s)
+  })
   return map
 })
 
@@ -313,11 +338,11 @@ function formatCountdown(s: ScheduleVO): string {
 }
 
 function getDayClass(dateStr: string): string {
-  const s = scheduleMap.value[dateStr]
-  if (!s) return 'day-empty'
-  if (isRushPending(s)) return 'day-rush'
-  if (s.status === 0) return 'day-available'
-  if (s.status === 1) return 'day-booked'
+  const list = scheduleMap.value[dateStr]
+  if (!list || list.length === 0) return 'day-empty'
+  if (list.some(s => isRushPending(s))) return 'day-rush'
+  if (list.some(s => s.status === 0)) return 'day-available'
+  if (list.some(s => s.status === 1)) return 'day-booked'
   return 'day-unavailable'
 }
 
@@ -407,10 +432,33 @@ const selectedSchedule = ref<ScheduleVO | null>(null)
 const remark = ref('')
 const bookLoading = ref(false)
 
+// 当天多档选择弹窗
+const dayPickerVisible = ref(false)
+const dayPickerSchedules = ref<ScheduleVO[]>([])
+
 function handleDayClick(dateStr: string) {
-  const s = scheduleMap.value[dateStr]
-  if (!s || s.status !== 0) return
+  const list = scheduleMap.value[dateStr]
+  if (!list || list.length === 0) return
   if (merchant.value?.scheduleVisibility === 2) return
+
+  if (list.length === 1) {
+    openScheduleDialog(list[0])
+  } else {
+    dayPickerSchedules.value = list
+    dayPickerVisible.value = true
+  }
+}
+
+function openScheduleDialog(s: ScheduleVO) {
+  dayPickerVisible.value = false
+
+  if (s.status !== 0) {
+    // 已预约或不可用：仅展示信息
+    selectedSchedule.value = s
+    bookDialogVisible.value = true
+    return
+  }
+
   if (isRushPending(s)) {
     ElMessage.info(`该抢档期尚未开放，还剩 ${formatCountdown(s)}`)
     return
@@ -655,8 +703,25 @@ onUnmounted(() => {
 .day-rush { cursor: pointer; background: #fdf6ec; color: #e6a23c; font-weight: 500; }
 .day-rush:hover { background: #faecd8; }
 .rush-countdown { font-size: 9px; color: #e6a23c; line-height: 1; margin-top: 2px; font-weight: 600; white-space: nowrap; }
+.multi-badge {
+  position: absolute; bottom: 4px; right: 4px;
+  background: #409eff; color: #fff; font-size: 9px;
+  padding: 0 4px; border-radius: 8px; line-height: 16px;
+}
 
 .book-dialog-content p { margin-bottom: 8px; }
+
+/* 多档选择弹窗 */
+.picker-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-radius: 6px; cursor: pointer;
+  transition: background 0.15s; margin-bottom: 4px;
+  border: 1px solid #ebeef5;
+}
+.picker-row:hover { background: #f5f7fa; }
+.picker-row--disabled { opacity: 0.6; cursor: default; }
+.picker-row--disabled:hover { background: transparent; }
+.picker-time { font-size: 15px; font-weight: 500; }
 
 /* ── 评价列表 ── */
 .reviews-card { margin-top: 20px; }

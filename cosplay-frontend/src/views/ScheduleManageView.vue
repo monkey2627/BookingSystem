@@ -8,12 +8,18 @@
     <div class="page-header">
       <h2 class="page-title">档期管理</h2>
       <div class="header-actions">
+        <span class="visibility-label">档期可见度：</span>
+        <el-select v-model="scheduleVisibility" style="width:110px" @change="updateVisibility">
+          <el-option :value="0" label="全公开" />
+          <el-option :value="1" label="仅忙闲" />
+          <el-option :value="2" label="完全私密" />
+        </el-select>
         <el-button @click="openBatchDialog">批量创建</el-button>
-        <el-button type="primary" @click="openCreateDialog(null)">创建档期</el-button>
+        <el-button type="primary" @click="openCreateDialog">创建档期</el-button>
       </div>
     </div>
 
-    <!-- 月份导航 -->
+    <!-- 月历 -->
     <el-card class="calendar-card">
       <div class="calendar-header">
         <el-button :icon="ArrowLeft" circle @click="prevMonth" />
@@ -21,7 +27,6 @@
         <el-button :icon="ArrowRight" circle @click="nextMonth" />
       </div>
 
-      <!-- 图例 -->
       <div class="legend">
         <span class="legend-item"><span class="dot" style="background:#67c23a"></span> 空闲可预约</span>
         <span class="legend-item"><span class="dot" style="background:#e6a23c"></span> 已有预约</span>
@@ -39,55 +44,79 @@
           @click="day && handleDayClick(day.dateStr)">
           <template v-if="day">
             <span class="day-num">{{ day.num }}</span>
-            <template v-if="scheduleMap[day.dateStr]">
-              <span class="day-slot">{{ scheduleMap[day.dateStr].timeSlot || '全天' }}</span>
-              <!-- 档期类型角标 -->
-              <span v-if="scheduleMap[day.dateStr].bookType === 1" class="rush-badge">抢</span>
+            <template v-if="scheduleMap[day.dateStr]?.length">
+              <span class="day-slot">
+                {{ scheduleMap[day.dateStr].length > 1
+                  ? scheduleMap[day.dateStr].length + ' 个档期'
+                  : (scheduleMap[day.dateStr][0].timeSlot || '全天') }}
+              </span>
+              <span v-if="scheduleMap[day.dateStr].some(s => s.bookType === 1)" class="rush-badge">抢</span>
             </template>
           </template>
         </div>
       </div>
     </el-card>
 
-    <!-- ── 单个创建/查看弹窗 ── -->
-    <el-dialog v-model="createDialogVisible"
-      :title="selectedSchedule ? '档期详情' : `创建档期 — ${selectedDate}`"
-      width="480px" @close="resetCreate">
-
-      <!-- 已有档期：显示操作 -->
-      <div v-if="selectedSchedule" class="schedule-detail">
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="日期">{{ selectedSchedule.date }}</el-descriptions-item>
-          <el-descriptions-item label="时间段">{{ selectedSchedule.timeSlot || '全天' }}</el-descriptions-item>
-          <el-descriptions-item label="模式">
-            {{ selectedSchedule.bookType === 0 ? '直接预约' : '抢档期' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <el-tag :type="statusType(selectedSchedule.status)">
-              {{ ['空闲','已预约','不可用'][selectedSchedule.status] }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item v-if="selectedSchedule.bookType === 1" label="当前排队">
-            {{ selectedSchedule.currentQueueSize }} 人
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <!-- 抢档期查看队列按钮 -->
-        <el-button v-if="selectedSchedule.bookType === 1" class="queue-btn"
-          type="primary" plain @click="openQueueDrawer(selectedSchedule)">
-          查看排队名单（{{ selectedSchedule.currentQueueSize }}人）
-        </el-button>
+    <!-- ── 当天档期列表弹窗 ── -->
+    <el-dialog v-model="dayDetailVisible" :title="`${selectedDate} 的档期`" width="520px">
+      <div v-if="selectedDaySchedules.length === 0" class="empty-day">
+        <el-empty description="该日暂无档期" :image-size="60" />
       </div>
+      <div v-for="s in selectedDaySchedules" :key="s.id" class="day-schedule-row">
+        <div class="day-schedule-info">
+          <span class="time-slot-text">{{ s.timeSlot || '全天' }}</span>
+          <el-tag :type="s.bookType === 1 ? 'primary' : ''" size="small" style="margin-left:6px">
+            {{ s.bookType === 1 ? '抢档期' : '直接预约' }}
+          </el-tag>
+          <el-tag :type="statusType(s.status)" size="small" style="margin-left:4px">
+            {{ ['空闲','已预约','不可用'][s.status] }}
+          </el-tag>
+        </div>
+        <div class="day-schedule-actions">
+          <el-button v-if="s.bookType === 1" size="small" plain
+            @click="openQueueDrawer(s); dayDetailVisible = false">
+            查看排队
+          </el-button>
+          <el-button v-if="s.bookType === 1" size="small" plain
+            @click="handleShare(s)">
+            分享
+          </el-button>
+          <el-button v-if="s.status === 0" size="small" type="danger" plain
+            :loading="!!deleteLoadingMap[s.id]" @click="handleDeleteFromDay(s.id)">
+            删除
+          </el-button>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="dayDetailVisible = false">关闭</el-button>
+        <el-button type="primary" @click="openCreateFromDay">+ 在该天添加档期</el-button>
+      </template>
+    </el-dialog>
 
-      <!-- 新建档期表单 -->
-      <el-form v-else :model="createForm" :rules="createRules" ref="createFormRef" label-width="90px">
+    <!-- ── 单个创建弹窗 ── -->
+    <el-dialog v-model="createDialogVisible"
+      :title="selectedDate ? `创建档期 — ${selectedDate}` : '创建档期'"
+      width="480px" @close="resetCreate">
+      <el-form :model="createForm" :rules="createRules" ref="createFormRef" label-width="90px">
+        <!-- 未从日历进入时显示日期选择 -->
+        <el-form-item v-if="!selectedDate" label="日期" prop="date">
+          <el-date-picker v-model="createForm.date" type="date"
+            value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" />
+        </el-form-item>
         <el-form-item label="服务类型" prop="serviceType">
           <el-select v-model="createForm.serviceType" placeholder="请选择服务类型" style="width:100%">
             <el-option v-for="(name, val) in SERVICE_TYPE_MAP" :key="val" :label="name" :value="Number(val)" />
           </el-select>
         </el-form-item>
-        <el-form-item label="时间段" prop="timeSlot">
-          <el-input v-model="createForm.timeSlot" placeholder="如 09:00-12:00，留空表示全天" />
+        <el-form-item label="时间段">
+          <el-checkbox v-model="createForm.fullDay">全天（不指定时间段）</el-checkbox>
+        </el-form-item>
+        <el-form-item v-if="!createForm.fullDay" label=" " class="time-row">
+          <el-time-picker v-model="createForm.startTime" format="HH:mm" value-format="HH:mm"
+            placeholder="开始时间" style="width:130px" />
+          <span class="time-sep">至</span>
+          <el-time-picker v-model="createForm.endTime" format="HH:mm" value-format="HH:mm"
+            placeholder="结束时间" style="width:130px" />
         </el-form-item>
         <el-form-item label="预约模式" prop="bookType">
           <el-radio-group v-model="createForm.bookType">
@@ -105,29 +134,14 @@
           </el-form-item>
         </template>
       </el-form>
-
       <template #footer>
-        <template v-if="selectedSchedule">
-          <!-- 分享按钮仅对抢档期显示 -->
-          <el-button v-if="selectedSchedule.bookType === 1"
-            type="info" plain @click="handleShare(selectedSchedule)">
-            分享链接
-          </el-button>
-          <el-button v-if="selectedSchedule.status === 0" type="danger" plain
-            :loading="deleteLoading" @click="handleDelete(selectedSchedule.id)">
-            删除档期
-          </el-button>
-          <el-button @click="createDialogVisible = false">关闭</el-button>
-        </template>
-        <template v-else>
-          <el-button @click="createDialogVisible = false">取消</el-button>
-          <el-button type="primary" :loading="createLoading" @click="handleCreate">创建</el-button>
-        </template>
+        <el-button @click="createDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="createLoading" @click="handleCreate">创建</el-button>
       </template>
     </el-dialog>
 
     <!-- ── 批量创建弹窗 ── -->
-    <el-dialog v-model="batchDialogVisible" title="批量创建档期" width="520px" @close="resetBatch">
+    <el-dialog v-model="batchDialogVisible" title="批量创建档期" width="540px" @close="resetBatch">
       <el-form :model="batchForm" :rules="batchRules" ref="batchFormRef" label-width="90px">
         <el-form-item label="服务类型" prop="serviceType">
           <el-select v-model="batchForm.serviceType" placeholder="请选择服务类型" style="width:100%">
@@ -144,9 +158,29 @@
           </el-checkbox-group>
           <div class="form-tip">不选表示范围内每天都创建</div>
         </el-form-item>
-        <el-form-item label="时间段">
-          <el-input v-model="batchForm.timeSlot" placeholder="如 09:00-12:00，留空全天" />
+
+        <!-- 多时间段 -->
+        <el-form-item label="时间段" required>
+          <div v-for="(slot, i) in batchForm.timeSlots" :key="i" class="batch-slot-row">
+            <el-checkbox v-model="slot.fullDay">全天</el-checkbox>
+            <template v-if="!slot.fullDay">
+              <el-time-picker v-model="slot.startTime" format="HH:mm" value-format="HH:mm"
+                placeholder="开始" style="width:110px" />
+              <span class="time-sep">至</span>
+              <el-time-picker v-model="slot.endTime" format="HH:mm" value-format="HH:mm"
+                placeholder="结束" style="width:110px" />
+            </template>
+            <el-button v-if="batchForm.timeSlots.length > 1"
+              text type="danger" :icon="Delete"
+              @click="batchForm.timeSlots.splice(i, 1)" />
+          </div>
+          <el-button text type="primary"
+            @click="batchForm.timeSlots.push({ fullDay: false, startTime: '', endTime: '' })">
+            + 添加时间段
+          </el-button>
+          <div class="form-tip">批量创建时每天将各自创建一个档期（每行对应一个档期）</div>
         </el-form-item>
+
         <el-form-item label="预约模式" prop="bookType">
           <el-radio-group v-model="batchForm.bookType">
             <el-radio :value="0">直接预约</el-radio>
@@ -192,23 +226,39 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { scheduleApi, merchantApi } from '@/api'
 import { RUSH_STATUS_MAP, SERVICE_TYPE_MAP, type ScheduleVO, type RushRecordVO } from '@/types'
 
-// ── 当前商家 ID ───────────────────────────────────────────
-const merchantId = ref<number | null>(null)  // null=加载中，-1=无商家资料，正数=已有商家
+interface TimeSlotEntry {
+  fullDay: boolean
+  startTime: string
+  endTime: string
+}
+
+// ── 当前商家 ID & 可见度 ───────────────────────────────────
+const merchantId = ref<number | null>(null)
+const scheduleVisibility = ref(0)
+
 onMounted(async () => {
   try {
     const myInfo = await merchantApi.getMyInfo()
     merchantId.value = myInfo.id
+    scheduleVisibility.value = myInfo.scheduleVisibility ?? 0
   } catch {
     merchantId.value = -1
   }
   await fetchSchedules()
 })
+
+async function updateVisibility() {
+  try {
+    await merchantApi.updateInfo({ scheduleVisibility: scheduleVisibility.value })
+    ElMessage.success('可见度已更新')
+  } catch { /* 由拦截器处理 */ }
+}
 
 // ── 月历 ──────────────────────────────────────────────────
 const now = new Date()
@@ -216,9 +266,13 @@ const currentMonth = ref(`${now.getFullYear()}-${String(now.getMonth() + 1).padS
 const loading = ref(false)
 const schedules = ref<ScheduleVO[]>([])
 
+// 每天可有多个档期
 const scheduleMap = computed(() => {
-  const map: Record<string, ScheduleVO> = {}
-  schedules.value.forEach(s => { map[s.date] = s })
+  const map: Record<string, ScheduleVO[]> = {}
+  schedules.value.forEach(s => {
+    if (!map[s.date]) map[s.date] = []
+    map[s.date].push(s)
+  })
   return map
 })
 
@@ -236,16 +290,16 @@ const calendarDays = computed(() => {
 })
 
 function getDayClass(dateStr: string) {
-  const s = scheduleMap.value[dateStr]
-  if (!s) return 'day-empty'
-  if (s.status === 0 && s.bookType === 1) return 'day-rush'
-  if (s.status === 0) return 'day-free'
-  if (s.status === 1) return 'day-booked'
+  const list = scheduleMap.value[dateStr]
+  if (!list || list.length === 0) return 'day-empty'
+  if (list.some(s => s.status === 0 && s.bookType === 1)) return 'day-rush'
+  if (list.some(s => s.status === 0)) return 'day-free'
+  if (list.some(s => s.status === 1)) return 'day-booked'
   return 'day-unavailable'
 }
 
 function statusType(status: number) {
-  return ['success', 'warning', 'info'][status] as any
+  return (['success', 'warning', 'info'] as const)[status]
 }
 
 function prevMonth() {
@@ -262,7 +316,7 @@ function nextMonth() {
 watch(currentMonth, fetchSchedules)
 
 async function fetchSchedules() {
-  if (!merchantId.value) return
+  if (!merchantId.value || merchantId.value < 0) return
   loading.value = true
   try {
     schedules.value = await scheduleApi.listByMonth(merchantId.value, currentMonth.value)
@@ -271,44 +325,82 @@ async function fetchSchedules() {
   }
 }
 
+// ── 当天档期列表弹窗 ─────────────────────────────────────
+const dayDetailVisible = ref(false)
+const selectedDate = ref('')
+const selectedDaySchedules = computed(() =>
+  selectedDate.value ? (scheduleMap.value[selectedDate.value] ?? []) : []
+)
+const deleteLoadingMap = ref<Record<number, boolean>>({})
+
+function handleDayClick(dateStr: string) {
+  selectedDate.value = dateStr
+  dayDetailVisible.value = true
+}
+
+function openCreateFromDay() {
+  dayDetailVisible.value = false
+  createDialogVisible.value = true
+}
+
+async function handleDeleteFromDay(id: number) {
+  await ElMessageBox.confirm('确定删除该档期吗？', '提示', { type: 'warning' })
+  deleteLoadingMap.value[id] = true
+  try {
+    await scheduleApi.deleteSchedule(id)
+    ElMessage.success('已删除')
+    await fetchSchedules()
+  } finally {
+    delete deleteLoadingMap.value[id]
+  }
+}
+
 // ── 单个创建 ─────────────────────────────────────────────
 const createDialogVisible = ref(false)
-const selectedDate = ref('')
-const selectedSchedule = ref<ScheduleVO | null>(null)
 const createLoading = ref(false)
-const deleteLoading = ref(false)
 const createFormRef = ref<FormInstance>()
-const createForm = ref({ serviceType: null as number | null, timeSlot: '', bookType: 0 as 0 | 1, rushOpenTime: null as any, maxQueueSize: 10 })
+const createForm = ref({
+  date: '',
+  serviceType: null as number | null,
+  fullDay: false,
+  startTime: '',
+  endTime: '',
+  bookType: 0 as 0 | 1,
+  rushOpenTime: null as any,
+  maxQueueSize: 10
+})
+
 const createRules: FormRules = {
+  date: [{ required: true, message: '请选择日期' }],
   serviceType: [{ required: true, message: '请选择服务类型' }],
   bookType: [{ required: true }]
 }
 
-function handleDayClick(dateStr: string) {
-  selectedDate.value = dateStr
-  selectedSchedule.value = scheduleMap.value[dateStr] ?? null
-  createDialogVisible.value = true
-}
-
-function openCreateDialog(date: string | null) {
-  selectedDate.value = date ?? ''
-  selectedSchedule.value = null
+function openCreateDialog() {
+  selectedDate.value = ''
   createDialogVisible.value = true
 }
 
 function resetCreate() {
-  createForm.value = { serviceType: null, timeSlot: '', bookType: 0, rushOpenTime: null, maxQueueSize: 10 }
+  createForm.value = { date: '', serviceType: null, fullDay: false, startTime: '', endTime: '', bookType: 0, rushOpenTime: null, maxQueueSize: 10 }
 }
 
 async function handleCreate() {
-  if (!await createFormRef.value?.validate().catch(() => false)) return
+  const date = selectedDate.value || createForm.value.date
+  if (!date) { ElMessage.warning('请选择日期'); return }
+  if (!createForm.value.fullDay && (!createForm.value.startTime || !createForm.value.endTime)) {
+    ElMessage.warning('请选择时间段，或勾选"全天"')
+    return
+  }
+  if (!createForm.value.serviceType) { ElMessage.warning('请选择服务类型'); return }
+  const timeSlot = createForm.value.fullDay ? '' : `${createForm.value.startTime}-${createForm.value.endTime}`
   createLoading.value = true
   try {
     await scheduleApi.create({
-      date: selectedDate.value,
-      timeSlot: createForm.value.timeSlot,
+      date,
+      timeSlot,
       bookType: createForm.value.bookType,
-      serviceType: createForm.value.serviceType!,
+      serviceType: createForm.value.serviceType,
       rushOpenTime: createForm.value.rushOpenTime
         ? new Date(createForm.value.rushOpenTime).toISOString().slice(0, 19)
         : undefined,
@@ -316,22 +408,12 @@ async function handleCreate() {
     })
     ElMessage.success('创建成功')
     createDialogVisible.value = false
-    fetchSchedules()
+    await fetchSchedules()
+    // 创建后打开当天列表
+    selectedDate.value = date
+    dayDetailVisible.value = true
   } finally {
     createLoading.value = false
-  }
-}
-
-async function handleDelete(id: number) {
-  await ElMessageBox.confirm('确定删除该档期吗？', '提示', { type: 'warning' })
-  deleteLoading.value = true
-  try {
-    await scheduleApi.deleteSchedule(id)
-    ElMessage.success('已删除')
-    createDialogVisible.value = false
-    fetchSchedules()
-  } finally {
-    deleteLoading.value = false
   }
 }
 
@@ -344,7 +426,7 @@ const batchForm = ref({
   serviceType: null as number | null,
   dateRange: null as any,
   weekdays: [] as number[],
-  timeSlot: '',
+  timeSlots: [{ fullDay: false, startTime: '', endTime: '' }] as TimeSlotEntry[],
   bookType: 0 as 0 | 1,
   rushOpenTime: null as any,
   maxQueueSize: 10
@@ -357,26 +439,43 @@ const batchRules: FormRules = {
 
 function openBatchDialog() { batchDialogVisible.value = true }
 function resetBatch() {
-  batchForm.value = { serviceType: null, dateRange: null, weekdays: [], timeSlot: '', bookType: 0, rushOpenTime: null, maxQueueSize: 10 }
+  batchForm.value = {
+    serviceType: null, dateRange: null, weekdays: [],
+    timeSlots: [{ fullDay: false, startTime: '', endTime: '' }],
+    bookType: 0, rushOpenTime: null, maxQueueSize: 10
+  }
 }
 
 async function handleBatch() {
   if (!await batchFormRef.value?.validate().catch(() => false)) return
+
+  for (const slot of batchForm.value.timeSlots) {
+    if (!slot.fullDay && (!slot.startTime || !slot.endTime)) {
+      ElMessage.warning('请完善时间段，或勾选"全天"')
+      return
+    }
+  }
+
   batchLoading.value = true
   try {
     const [start, end] = batchForm.value.dateRange
-    await scheduleApi.batchCreate({
-      startDate: start.toISOString().slice(0, 10),
-      endDate: end.toISOString().slice(0, 10),
-      weekdays: batchForm.value.weekdays,
-      timeSlot: batchForm.value.timeSlot,
-      bookType: batchForm.value.bookType,
-      serviceType: batchForm.value.serviceType!,
-      rushOpenTime: batchForm.value.rushOpenTime
-        ? new Date(batchForm.value.rushOpenTime).toISOString().slice(0, 19)
-        : undefined,
-      maxQueueSize: batchForm.value.maxQueueSize
-    })
+    const rushOpenTime = batchForm.value.rushOpenTime
+      ? new Date(batchForm.value.rushOpenTime).toISOString().slice(0, 19)
+      : undefined
+
+    for (const slot of batchForm.value.timeSlots) {
+      const timeSlot = slot.fullDay ? '' : `${slot.startTime}-${slot.endTime}`
+      await scheduleApi.batchCreate({
+        startDate: start.toISOString().slice(0, 10),
+        endDate: end.toISOString().slice(0, 10),
+        weekdays: batchForm.value.weekdays,
+        timeSlot,
+        bookType: batchForm.value.bookType,
+        serviceType: batchForm.value.serviceType!,
+        rushOpenTime,
+        maxQueueSize: batchForm.value.maxQueueSize
+      })
+    }
     ElMessage.success('批量创建完成')
     batchDialogVisible.value = false
     fetchSchedules()
@@ -416,18 +515,16 @@ async function handleStatusChange(rushId: number, status: number) {
   try {
     await scheduleApi.updateRushStatus(rushId, status)
     ElMessage.success('状态已更新')
-  } catch {
-    /* 错误由 axios 拦截器弹出 */
-  }
+  } catch { /* 错误由 axios 拦截器弹出 */ }
 }
 </script>
 
 <style scoped>
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
 .page-title { font-size: 20px; font-weight: 600; margin: 0; }
-.header-actions { display: flex; gap: 8px; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.visibility-label { font-size: 13px; color: #606266; white-space: nowrap; }
 
-.calendar-card { }
 .calendar-header { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 12px; }
 .month-label { font-size: 16px; font-weight: 600; min-width: 100px; text-align: center; }
 
@@ -453,14 +550,31 @@ async function handleStatusChange(rushId: number, status: number) {
   background: #409eff; color: #fff; font-size: 10px;
   padding: 1px 4px; border-radius: 4px;
 }
-
 .day-free { background: #f0f9eb; color: #67c23a; }
 .day-rush { background: #ecf5ff; color: #409eff; }
 .day-booked { background: #fdf6ec; color: #e6a23c; }
 .day-unavailable { background: #f4f4f5; color: #909399; text-decoration: line-through; }
 .day-empty { color: #c0c4cc; }
 
-.schedule-detail .queue-btn { margin-top: 12px; width: 100%; }
+/* 当天档期列表 */
+.empty-day { padding: 16px 0; }
+.day-schedule-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-bottom: 1px solid #f0f0f0;
+  gap: 8px;
+}
+.day-schedule-info { display: flex; align-items: center; flex: 1; }
+.time-slot-text { font-weight: 500; font-size: 14px; }
+.day-schedule-actions { display: flex; gap: 6px; }
+
+/* 时间选择 */
+.time-row :deep(.el-form-item__content) { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.time-sep { color: #606266; margin: 0 4px; }
+
+/* 批量时间段行 */
+.batch-slot-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
+}
 
 .form-tip { font-size: 12px; color: #909399; margin-top: 4px; }
 

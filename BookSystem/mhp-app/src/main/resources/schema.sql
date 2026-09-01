@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS `merchant` (
   `price_min`        DECIMAL(10,2) NULL                                COMMENT '价格下限（元），未设置时前端不展示',
   `price_max`        DECIMAL(10,2) NULL                                COMMENT '价格上限（元）',
   `booking_notice`   VARCHAR(500)  NULL                                COMMENT '预约须知，展示在预约对话框顶部',
-  `create_time`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP  COMMENT '创建时间',
+  `status`              TINYINT       NOT NULL DEFAULT 1                  COMMENT '店铺状态：1=营业中 0=已关闭',
+  `schedule_visibility` TINYINT       NOT NULL DEFAULT 0                  COMMENT '档期可见度：0=全公开 1=仅忙闲 2=完全私密',
+  `create_time`         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP  COMMENT '创建时间',
   `update_time`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP          COMMENT '更新时间',
   PRIMARY KEY (`id`),

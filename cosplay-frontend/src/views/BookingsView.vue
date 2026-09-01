@@ -10,8 +10,8 @@
       </span>
     </div>
 
-    <!-- ── 服务类型筛选 ── -->
-    <div class="type-filter">
+    <!-- ── 服务类型筛选（投诉 tab 时隐藏） ── -->
+    <div v-if="selectedStatusStr !== 'complaints'" class="type-filter">
       <el-check-tag :checked="selectedType === null" @click="setType(null)" class="type-chip">全部</el-check-tag>
       <el-check-tag
         v-for="(name, val) in SERVICE_TYPE_MAP"
@@ -26,11 +26,12 @@
     <!-- ── 状态 Tab（仅卖家视角） ── -->
     <div v-if="isMerchantView" class="status-tabs-wrap">
       <el-tabs v-model="selectedStatusStr" @tab-change="onStatusChange">
-        <el-tab-pane label="全部"   name="all" />
-        <el-tab-pane label="待确认" name="0" />
-        <el-tab-pane label="待完成" name="2" />
-        <el-tab-pane label="已完成" name="3" />
-        <el-tab-pane label="已取消" name="4" />
+        <el-tab-pane label="全部"     name="all" />
+        <el-tab-pane label="待确认"   name="0" />
+        <el-tab-pane label="待完成"   name="2" />
+        <el-tab-pane label="已完成"   name="3" />
+        <el-tab-pane label="已取消"   name="4" />
+        <el-tab-pane label="收到的投诉" name="complaints" />
       </el-tabs>
     </div>
 
@@ -41,13 +42,39 @@
       </el-empty>
     </div>
 
-    <!-- ── 空状态 ── -->
+    <!-- ── 投诉列表（仅卖家投诉 Tab） ── -->
+    <template v-else-if="selectedStatusStr === 'complaints'">
+      <div v-if="complaintsLoading" class="empty-wrap"><el-icon class="is-loading"><Loading /></el-icon></div>
+      <div v-else-if="complaints.length === 0" class="empty-wrap">
+        <el-empty description="暂无收到的投诉" />
+      </div>
+      <div v-else class="booking-list">
+        <el-card v-for="c in complaints" :key="c.id" class="booking-card complaint-card">
+          <div class="booking-header">
+            <span class="booking-no">预约 #{{ c.orderId }}</span>
+            <el-tag size="small" :type="COMPLAINT_STATUS_TYPE[c.status]">
+              {{ COMPLAINT_STATUS_LABEL[c.status] }}
+            </el-tag>
+          </div>
+          <div class="booking-info" style="gap:8px; font-size:14px; color:#606266;">
+            <div><el-icon><User /></el-icon> 投诉方：{{ c.complainantNickname }}</div>
+            <div class="complaint-reason">{{ c.reason }}</div>
+            <div v-if="c.adminReply" class="admin-reply">
+              <el-icon><ChatDotRound /></el-icon> 平台回复：{{ c.adminReply }}
+            </div>
+            <div class="create-time">{{ formatTime(c.createTime) }}</div>
+          </div>
+        </el-card>
+      </div>
+    </template>
+
+    <!-- ── 空状态（普通预约列表） ── -->
     <div v-else-if="bookings.length === 0 && !loading" class="empty-wrap">
       <el-empty description="暂无订单" />
     </div>
 
     <!-- ── 订单列表 ── -->
-    <div class="booking-list">
+    <div v-else class="booking-list">
       <el-card v-for="booking in bookings" :key="booking.id" class="booking-card">
         <div class="booking-header">
           <span class="booking-no">{{ booking.orderNo }}</span>
@@ -108,10 +135,10 @@
       </el-card>
     </div>
 
-    <div class="load-more" v-if="hasMore">
+    <div class="load-more" v-if="hasMore && selectedStatusStr !== 'complaints'">
       <el-button :loading="loading" @click="loadMore">加载更多</el-button>
     </div>
-    <div class="no-more" v-if="!hasMore && bookings.length > 0">没有更多了</div>
+    <div class="no-more" v-if="!hasMore && bookings.length > 0 && selectedStatusStr !== 'complaints'">没有更多了</div>
 
     <!-- ── 投诉对话框 ── -->
     <el-dialog v-model="complaintDialogVisible" title="提交投诉" width="480px" @close="resetComplaintForm">
@@ -150,11 +177,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { User, Shop, Calendar, ChatDotRound } from '@element-plus/icons-vue'
+import { User, Shop, Calendar, ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { bookingApi, reviewApi, complaintApi, merchantApi } from '@/api'
-import { BOOKING_STATUS_MAP, SERVICE_TYPE_MAP, type BookingVO } from '@/types'
+import { BOOKING_STATUS_MAP, SERVICE_TYPE_MAP, type BookingVO, type ComplaintVO } from '@/types'
+
+const COMPLAINT_STATUS_LABEL: Record<number, string> = { 0: '待处理', 1: '处理中', 2: '已处理' }
+const COMPLAINT_STATUS_TYPE: Record<number, 'info' | 'warning' | 'success'> = { 0: 'info', 1: 'warning', 2: 'success' }
 
 const route = useRoute()
 const router = useRouter()
@@ -184,7 +214,11 @@ function setType(val: number | null) {
 }
 
 function onStatusChange() {
-  fetchBookings(null)
+  if (selectedStatusStr.value === 'complaints') {
+    fetchComplaints()
+  } else {
+    fetchBookings(null)
+  }
 }
 
 // ── 列表数据 ──────────────────────────────────────────────
@@ -237,6 +271,19 @@ watch(isMerchantView, async (isMerchant) => {
   }
   fetchBookings(null)
 })
+
+// ── 收到的投诉 ────────────────────────────────────────────
+const complaints = ref<ComplaintVO[]>([])
+const complaintsLoading = ref(false)
+
+async function fetchComplaints() {
+  complaintsLoading.value = true
+  try {
+    complaints.value = await complaintApi.listReceived()
+  } finally {
+    complaintsLoading.value = false
+  }
+}
 
 // ── 操作 ──────────────────────────────────────────────────
 async function handleConfirm(id: number) {
@@ -430,4 +477,18 @@ onMounted(async () => {
 .no-more { text-align: center; color: #c0c4cc; font-size: 13px; margin-top: 24px; }
 .empty-wrap { padding: 40px 0; display: flex; flex-direction: column; align-items: center; gap: 16px; }
 .no-merchant-wrap { padding: 60px 0; display: flex; justify-content: center; }
+
+.complaint-card .complaint-reason {
+  background: #f5f7fa;
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #303133;
+  line-height: 1.6;
+}
+.complaint-card .admin-reply {
+  color: #409eff;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
 </style>

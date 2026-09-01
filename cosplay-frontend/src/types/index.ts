@@ -222,3 +222,15 @@ export interface QuestionItem {
   options?: string[]     // radio/checkbox 的选项
   required: boolean
 }
+
+export interface ComplaintVO {
+  id: number
+  orderId: number
+  complainantId: number
+  complainantNickname: string
+  reason: string
+  evidence?: string
+  status: 0 | 1 | 2      // 0=待处理 1=处理中 2=已处理
+  adminReply?: string
+  createTime: string
+}
