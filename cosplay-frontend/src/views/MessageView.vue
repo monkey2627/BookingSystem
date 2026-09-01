@@ -208,7 +208,7 @@ async function tryOpenFromQuery() {
 }
 
 onMounted(async () => {
-  try { await connect() } catch { /* 连接失败不阻断页面加载 */ }
+  connect().catch(() => {}) // WebSocket 后台建立，不阻塞会话加载
   await fetchConversations()
   await tryOpenFromQuery()
 })
