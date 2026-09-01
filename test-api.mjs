@@ -5,7 +5,7 @@
  * 运行: node test-api.mjs
  * 要求: Node 18+（内置 fetch），后端 Gateway 在 localhost:8080
  *
- * 测试覆盖 11 个模块、约 80 个用例，全部使用独立测试账号，
+ * 测试覆盖 12 个模块、约 90 个用例，全部使用独立测试账号，
  * 不依赖手动切换账号，重复运行安全（幂等注册 + 动态日期）。
  */
 
@@ -847,6 +847,117 @@ async function suiteQuestionnaire() {
 }
 
 // ════════════════════════════════════════════════════════════════
+// Suite 12：聊天入口（新功能）
+// ════════════════════════════════════════════════════════════════
+async function suiteChatEntry() {
+  await suite('12. 聊天入口', async () => {
+
+    // ── 12.1 BookingVO.merchantUserId 字段 ───────────────────────
+    await test('GET /booking/my 返回的 BookingVO 含 merchantUserId 字段', async () => {
+      const r = await get('/booking/my', ctx.tokens.user_a, { size: 20 })
+      assertOk(r)
+      const bookings = r.data?.list ?? []
+      assert(bookings.length > 0, '预约列表为空，无法验证 merchantUserId')
+      const b = bookings[0]
+      assert('merchantUserId' in b, 'BookingVO 缺少 merchantUserId 字段')
+      assert(typeof b.merchantUserId === 'number' && b.merchantUserId > 0,
+        `merchantUserId 应为正整数，实际: ${b.merchantUserId}`)
+    })
+
+    await test('BookingVO.merchantUserId 与商家账号 userId 一致', async () => {
+      // 找到 user_a 与 merchant_c 的预约
+      const r = await get('/booking/my', ctx.tokens.user_a, { size: 20 })
+      assertOk(r)
+      const b = r.data?.list?.find(b => b.merchantId === ctx.merchantIds.merchant_c)
+      assert(b, '找不到 user_a 与 merchant_c 的预约')
+      assert(b.merchantUserId === ctx.userIds.merchant_c,
+        `merchantUserId=${b.merchantUserId} 与 merchant_c userId=${ctx.userIds.merchant_c} 不符`)
+    })
+
+    await test('GET /booking/received 商家侧 BookingVO 也含 merchantUserId', async () => {
+      const r = await get('/booking/received', ctx.tokens.merchant_c, { size: 20 })
+      assertOk(r)
+      const bookings = r.data?.list ?? []
+      assert(bookings.length > 0, '商家收到的预约列表为空')
+      const b = bookings[0]
+      assert('merchantUserId' in b, '商家侧 BookingVO 缺少 merchantUserId 字段')
+      assert(b.merchantUserId === ctx.userIds.merchant_c,
+        `商家侧 merchantUserId=${b.merchantUserId}，应为 ${ctx.userIds.merchant_c}`)
+    })
+
+    // ── 12.2 首次发消息（全新会话，无历史记录）───────────────────
+    await test('user_b 向 merchant_d 发第一条消息（之前从未聊过）', async () => {
+      const r = await post('/message/send', {
+        toUserId: ctx.userIds.merchant_d,
+        content: `聊天入口测试_首条消息_${Date.now()}`
+      }, ctx.tokens.user_b)
+      assertOk(r, '首次发消息')
+    })
+
+    await test('发消息后 user_b 的会话列表包含 merchant_d 的会话', async () => {
+      const r = await get('/message/conversations', ctx.tokens.user_b)
+      assertOk(r)
+      assert(Array.isArray(r.data), '会话列表不是数组')
+      const conv = r.data.find(c => c.userId === ctx.userIds.merchant_d)
+      assert(conv, '会话列表中未找到与 merchant_d 的会话')
+      assert(conv.lastMessage?.length > 0, '会话的 lastMessage 为空')
+    })
+
+    await test('merchant_d 的会话列表包含来自 user_b 的新会话', async () => {
+      const r = await get('/message/conversations', ctx.tokens.merchant_d)
+      assertOk(r)
+      const conv = r.data?.find(c => c.userId === ctx.userIds.user_b)
+      assert(conv, 'merchant_d 会话列表中未找到 user_b 的会话')
+    })
+
+    // ── 12.3 新会话历史查询（无历史时返回空列表而非报错）─────────
+    await test('查询从未聊过的对象的消息历史，返回空列表而非错误', async () => {
+      // user_b 和 merchant_c 之前没有发过消息（只有问卷预约没有聊天）
+      const r = await get('/message/history', ctx.tokens.merchant_c, {
+        targetUserId: ctx.userIds.user_b, size: 20
+      })
+      // 可能有也可能没有，但不应该报错
+      assert(r.code === 200, `查询空历史应返回 200，实际 code=${r.code}`)
+      assert(Array.isArray(r.data?.list), '空历史应返回 list 数组')
+    })
+
+    await test('user_b 与 merchant_d 的消息历史包含刚发送的消息', async () => {
+      const r = await get('/message/history', ctx.tokens.user_b, {
+        targetUserId: ctx.userIds.merchant_d, size: 20
+      })
+      assertOk(r)
+      assert(r.data?.list?.length > 0, '消息历史为空，首条消息未保存')
+      assert('hasMore' in r.data && 'nextCursor' in r.data, '缺少游标分页字段')
+    })
+
+    // ── 12.4 双向聊天验证 ─────────────────────────────────────────
+    await test('merchant_d 向 user_b 回复消息', async () => {
+      const r = await post('/message/send', {
+        toUserId: ctx.userIds.user_b,
+        content: '商家回复测试消息'
+      }, ctx.tokens.merchant_d)
+      assertOk(r, 'merchant_d 回复')
+    })
+
+    await test('user_b 收到回复后历史消息数 ≥ 2', async () => {
+      const r = await get('/message/history', ctx.tokens.user_b, {
+        targetUserId: ctx.userIds.merchant_d, size: 20
+      })
+      assertOk(r)
+      assert(r.data?.list?.length >= 2,
+        `双向对话后消息数应 ≥ 2，实际 ${r.data?.list?.length}`)
+    })
+
+    await test('无 token 发送消息返回 401', async () => {
+      const r = await post('/message/send', {
+        toUserId: ctx.userIds.merchant_c, content: '无 token 测试'
+      })
+      assert(r.code !== 200, `期望鉴权失败，实际 code=${r.code}`)
+    })
+  })
+}
+
+// ════════════════════════════════════════════════════════════════
 // Main
 // ════════════════════════════════════════════════════════════════
 async function main() {
@@ -875,6 +986,7 @@ async function main() {
   await suiteMessage()
   await suitePermission()
   await suiteQuestionnaire()
+  await suiteChatEntry()
 
   // ── 汇总 ─────────────────────────────────────────────────────
   const total = passed + failed
