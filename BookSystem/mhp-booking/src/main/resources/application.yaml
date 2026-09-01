@@ -66,10 +66,14 @@ dubbo:
   application:
     name: mhp-booking
     serialize-check-status: WARN
+    metadata-type: remote   # 元数据存入 Nacos，Consumer 从 Nacos 拉取，不走 Provider 元数据端口
+  metadata-report:
+    address: nacos://127.0.0.1:8848
+    group: DUBBO
   protocol:
-    name: tri
-    port: -1
+    name: tri       # Triple 协议（HTTP/2），Dubbo3 推荐，与 gRPC 互通
+    port: -1        # 随机端口，避免与 Spring Boot HTTP 8082 冲突
     host: 10.2.0.6  # 固定注册到 Nacos 的 IP，防止选中 Docker 网桥地址 172.18.0.1
   registry:
     address: nacos://127.0.0.1:8848
-    group: DUBBO
+    group: DUBBO    # 独立 group，避免 Dubbo 实例混入 Spring Cloud DEFAULT_GROUP 被 Gateway 轮询

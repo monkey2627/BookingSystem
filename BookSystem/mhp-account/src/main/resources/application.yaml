@@ -58,6 +58,10 @@ dubbo:
   application:
     name: mhp-account
     serialize-check-status: WARN
+    metadata-type: remote   # 元数据存入 Nacos，Consumer 从 Nacos 拉取，不走 Provider 元数据端口
+  metadata-report:
+    address: nacos://127.0.0.1:8848
+    group: DUBBO
   protocol:
     name: tri       # Triple 协议（HTTP/2），Dubbo3 推荐，与 gRPC 互通
     port: -1        # 随机端口，避免与 Spring Boot HTTP 8081 冲突
