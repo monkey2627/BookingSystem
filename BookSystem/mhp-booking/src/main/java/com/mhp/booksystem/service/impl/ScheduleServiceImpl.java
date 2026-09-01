@@ -120,11 +120,11 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
         return schedules.stream().map(s -> {
             ScheduleVO vo = toVO(s);
             if (s.getBookType() == 1) {
-                long count = rushRecordMapper.selectCount(
-                        new LambdaQueryWrapper<RushRecord>()
-                                .eq(RushRecord::getScheduleId, s.getId())
-                                .eq(RushRecord::getStatus, 0));
-                vo.setCurrentQueueSize((int) count);
+                // 直接读 Redis ZCARD，与 Lua 脚本判满逻辑完全一致，
+                // 避免 MySQL status 字段与 Redis 不同步导致显示不准确
+                String rushKey = "schedule:" + s.getId();
+                Long zcard = stringRedisTemplate.opsForZSet().size(rushKey);
+                vo.setCurrentQueueSize(zcard == null ? 0 : zcard.intValue());
             }
             return vo;
         }).collect(Collectors.toList());
@@ -297,6 +297,12 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
         }
         record.setStatus(status);
         rushRecordMapper.updateById(record);
+
+        // 已放弃（status=3）时从 Redis ZSET 移除，释放槽位供新用户入队
+        if (status == 3) {
+            String rushKey = "schedule:" + record.getScheduleId();
+            stringRedisTemplate.opsForZSet().remove(rushKey, String.valueOf(record.getUserId()));
+        }
     }
 
     @Override
