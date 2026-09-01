@@ -888,3 +888,85 @@ rpcMerchantService.streamMerchants(filter, observer);
 | 接口级注册 | Dubbo 2 方式：每个接口单独注册，数据量大，大规模场景有推送风暴风险 |
 | 磁盘缓存 | Consumer 收到地址列表后写入本地文件，Nacos 宕机时作兜底 |
 | 优雅下线 | 停机时 ShutdownHook 主动向 Nacos 注销，Consumer 立即感知，不需等 30s |
+
+---
+
+## 十三、实际遇到的问题
+
+### Dubbo 3.3.x + Nacos 2.x：序列化安全 STRICT 模式导致 RPC 调用 500
+
+**现象**
+
+服务启动正常，部分 Dubbo 调用偶发或必现 500，日志中出现：
+
+```
+[Serialization Security] Serialized class com.google.protobuf.GeneratedMessageLite$SerializedForm
+is not in allow list. Current mode is `STRICT`, will disallow to deserialize it by default.
+```
+
+**根因：三个机制叠加触发**
+
+**① Dubbo 3.2+ 的序列化安全检查**
+
+Dubbo 引入了反序列化白名单（allowlist）防御 Java 反序列化攻击。STRICT 模式下，白名单以外的任何类都会被拒绝，直接抛 `IllegalArgumentException`，导致调用失败。
+
+Java 反序列化漏洞的原理：攻击者构造恶意字节流，反序列化时借助类库中已有的"Gadget Chain"（如 Apache Commons Collections、Spring 框架中的合法类）触发任意代码执行。STRICT 模式的白名单就是阻断这条路径——你的类不在我的名单里，我就不反序列化它。
+
+**② Nacos 2.x 内部使用 Protobuf**
+
+Nacos 2.x 将 Server 与 Client 之间的通信从 HTTP 升级为 gRPC（Protobuf）。Dubbo 在做应用级服务发现时，需要从 Nacos 拉取 Provider 的接口元数据（revision 版本对应的接口详情），这个拉取过程中会接触到 Nacos 内部的 Protobuf 对象。
+
+**③ Protobuf 的 Java 序列化代理**
+
+Protobuf 生成的消息类都定义了 `writeReplace()` 方法：
+
+```java
+// Protobuf 生成的消息类内部
+protected Object writeReplace() throws ObjectStreamException {
+    return new SerializedForm(this);
+}
+```
+
+这是 Java 序列化协议的代理模式：对象被序列化时，如果定义了 `writeReplace()`，框架会把它替换成 `writeReplace()` 返回的对象来序列化。Protobuf 用这个机制保证跨版本兼容性。
+
+**三者叠加的结果：**
+
+```
+Dubbo 内部元数据服务拉取 Nacos 数据（用 Hessian2 序列化）
+    → 遇到 Nacos 的 Protobuf 消息对象
+    → 触发 writeReplace()，返回 GeneratedMessageLite$SerializedForm
+    → Hessian2 尝试序列化 SerializedForm
+    → STRICT 模式检查：不在白名单 → 抛 IllegalArgumentException → 调用失败 → 500
+```
+
+**为什么是偶发的？**
+
+Dubbo 会缓存服务实例的元数据。缓存命中时，不需要重新从 Nacos 拉取 Protobuf 元数据，调用成功；缓存失效（服务实例变更、revision 更新、首次启动后一段时间）时，触发元数据刷新，命中 Protobuf 序列化路径，调用失败。这就是同一个接口时好时坏的原因。
+
+**修复**
+
+在 Consumer（mhp-booking）和 Provider（mhp-account）的 Dubbo 配置里加一行，将 STRICT 降级为 WARN：
+
+```yaml
+dubbo:
+  application:
+    name: mhp-booking
+    serialize-check-status: WARN   # 加这一行
+```
+
+`WARN` 模式保留安全检查逻辑，检测到不在白名单的类时只打警告日志，不抛异常，让调用继续。`GeneratedMessageLite$SerializedForm` 本身没有已知的 Gadget Chain，降级为警告是合理的工程折中。
+
+更精确的方案是创建 `src/main/resources/security/serialize.allowlist`，只放行这一个类：
+
+```
+com.google.protobuf.GeneratedMessageLite$SerializedForm
+```
+
+**为什么换 Zookeeper 可以根本上避免此问题**
+
+| 注册中心 | 内部通信协议 | 是否引入 Protobuf |
+|----------|------------|-----------------|
+| Nacos 2.x | gRPC（Protobuf） | 是 → 触发上述问题 |
+| Zookeeper | Jute（自研二进制，无 Protobuf）| 否 → 不存在此问题 |
+
+Zookeeper 与 Dubbo 的元数据交换不涉及 Protobuf，STRICT 模式的检查不会被触发。但项目中 Nacos 同时承担配置中心职责，换 Zookeeper 意味着引入额外的中间件，代价远大于加一行配置，不值得。
