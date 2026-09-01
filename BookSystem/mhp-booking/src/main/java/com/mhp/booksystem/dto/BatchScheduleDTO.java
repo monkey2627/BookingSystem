@@ -27,9 +27,7 @@ public class BatchScheduleDTO {
     // startDate <= endDate 的关系校验需要在 Service 层做
     // Bean Validation 无法直接比较同一对象内两个字段之间的关系
 
-    // @Size 用于集合时校验元素个数：min=1 保证至少选一个星期几
-    // 元素值必须在 1~7（1=周一 … 7=周日），元素值范围在 Service 层校验
-    @Size(min = 1, message = "至少选择一个星期几")
+    // 空列表 = 范围内每天都创建；元素值范围 1~7 在 Service 层校验
     private List<Integer> weekdays;
 
     // null 表示全天档；非 null 时校验 HH:mm-HH:mm 格式

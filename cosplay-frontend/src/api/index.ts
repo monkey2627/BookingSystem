@@ -45,13 +45,13 @@ export const scheduleApi = {
     request.get<any, ScheduleVO[]>(`/schedule/merchant/${merchantId}`, { params: { month } }),
 
   create: (data: {
-    date: string; timeSlot: string; bookType: 0 | 1; serviceType: number;
+    date: string; timeSlot: string | null; bookType: 0 | 1; serviceType: number;
     rushOpenTime?: string; maxQueueSize?: number
   }) => request.post<any, void>('/schedule', data),
 
   batchCreate: (data: {
     startDate: string; endDate: string; weekdays: number[];
-    timeSlot: string; bookType: 0 | 1; serviceType: number;
+    timeSlot: string | null; bookType: 0 | 1; serviceType: number;
     rushOpenTime?: string; maxQueueSize?: number
   }) => request.post<any, void>('/schedule/batch', data),
 

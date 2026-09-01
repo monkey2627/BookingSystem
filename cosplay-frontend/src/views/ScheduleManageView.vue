@@ -159,8 +159,16 @@
           <div class="form-tip">不选表示范围内每天都创建</div>
         </el-form-item>
 
-        <!-- 多时间段 -->
-        <el-form-item label="时间段" required>
+        <!-- 时间段模式切换 -->
+        <el-form-item label="时间段模式">
+          <el-radio-group v-model="batchForm.batchMode">
+            <el-radio value="manual">手动指定</el-radio>
+            <el-radio value="interval">固定间隔自动生成</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <!-- 手动多时间段 -->
+        <el-form-item v-if="batchForm.batchMode === 'manual'" label="时间段" required>
           <div v-for="(slot, i) in batchForm.timeSlots" :key="i" class="batch-slot-row">
             <el-checkbox v-model="slot.fullDay">全天</el-checkbox>
             <template v-if="!slot.fullDay">
@@ -178,8 +186,32 @@
             @click="batchForm.timeSlots.push({ fullDay: false, startTime: '', endTime: '' })">
             + 添加时间段
           </el-button>
-          <div class="form-tip">批量创建时每天将各自创建一个档期（每行对应一个档期）</div>
+          <div class="form-tip">每行对应每天的一个档期</div>
         </el-form-item>
+
+        <!-- 固定间隔模式 -->
+        <template v-if="batchForm.batchMode === 'interval'">
+          <el-form-item label="每天开始" required>
+            <el-time-picker v-model="batchForm.intervalStart" format="HH:mm" value-format="HH:mm"
+              placeholder="如 02:00" />
+          </el-form-item>
+          <el-form-item label="每天结束" required>
+            <el-time-picker v-model="batchForm.intervalEnd" format="HH:mm" value-format="HH:mm"
+              placeholder="如 22:00" />
+          </el-form-item>
+          <el-form-item label="间隔（小时）" required>
+            <el-input-number v-model="batchForm.intervalHours"
+              :min="0.5" :max="24" :step="0.5" :precision="1" style="width:130px" />
+            <span class="form-tip" style="margin-left:8px">每个档期时长 = 间隔时长</span>
+          </el-form-item>
+          <el-form-item label=" ">
+            <div v-if="intervalPreview.length" class="interval-preview">
+              <el-tag v-for="(s, i) in intervalPreview" :key="i" size="small" style="margin:2px">{{ s }}</el-tag>
+              <div class="form-tip">共 {{ intervalPreview.length }} 个档期 / 天</div>
+            </div>
+            <div v-else class="form-tip">填写开始、结束和间隔后，此处显示预览</div>
+          </el-form-item>
+        </template>
 
         <el-form-item label="预约模式" prop="bookType">
           <el-radio-group v-model="batchForm.bookType">
@@ -392,7 +424,7 @@ async function handleCreate() {
     return
   }
   if (!createForm.value.serviceType) { ElMessage.warning('请选择服务类型'); return }
-  const timeSlot = createForm.value.fullDay ? '' : `${createForm.value.startTime}-${createForm.value.endTime}`
+  const timeSlot = createForm.value.fullDay ? null : `${createForm.value.startTime}-${createForm.value.endTime}`
   createLoading.value = true
   try {
     await scheduleApi.create({
@@ -425,7 +457,11 @@ const batchForm = ref({
   serviceType: null as number | null,
   dateRange: null as any,
   weekdays: [] as number[],
+  batchMode: 'manual' as 'manual' | 'interval',
   timeSlots: [{ fullDay: false, startTime: '', endTime: '' }] as TimeSlotEntry[],
+  intervalStart: '',
+  intervalEnd: '',
+  intervalHours: 2,
   bookType: 0 as 0 | 1,
   rushOpenTime: null as any,
   maxQueueSize: 10
@@ -436,11 +472,38 @@ const batchRules: FormRules = {
   bookType: [{ required: true }]
 }
 
+// 固定间隔模式：根据开始/结束/间隔计算时间段预览
+const intervalPreview = computed(() => {
+  const { intervalStart, intervalEnd, intervalHours } = batchForm.value
+  if (!intervalStart || !intervalEnd || !intervalHours) return []
+  const [sh, sm] = intervalStart.split(':').map(Number)
+  const [eh, em] = intervalEnd.split(':').map(Number)
+  const startMins = sh * 60 + sm
+  const endMins = eh * 60 + em
+  const stepMins = Math.round(intervalHours * 60)
+  if (stepMins <= 0 || startMins >= endMins) return []
+  const slots: string[] = []
+  for (let cur = startMins; cur + stepMins <= endMins; cur += stepMins) {
+    const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+    slots.push(`${fmt(cur)}-${fmt(cur + stepMins)}`)
+  }
+  return slots
+})
+
+function generateIntervalSlots(): TimeSlotEntry[] {
+  return intervalPreview.value.map(s => {
+    const [startTime, endTime] = s.split('-')
+    return { fullDay: false, startTime, endTime }
+  })
+}
+
 function openBatchDialog() { batchDialogVisible.value = true }
 function resetBatch() {
   batchForm.value = {
     serviceType: null, dateRange: null, weekdays: [],
+    batchMode: 'manual',
     timeSlots: [{ fullDay: false, startTime: '', endTime: '' }],
+    intervalStart: '', intervalEnd: '', intervalHours: 2,
     bookType: 0, rushOpenTime: null, maxQueueSize: 10
   }
 }
@@ -448,10 +511,21 @@ function resetBatch() {
 async function handleBatch() {
   if (!await batchFormRef.value?.validate().catch(() => false)) return
 
-  for (const slot of batchForm.value.timeSlots) {
-    if (!slot.fullDay && (!slot.startTime || !slot.endTime)) {
-      ElMessage.warning('请完善时间段，或勾选"全天"')
+  const slots = batchForm.value.batchMode === 'interval'
+    ? generateIntervalSlots()
+    : batchForm.value.timeSlots
+
+  if (batchForm.value.batchMode === 'interval') {
+    if (slots.length === 0) {
+      ElMessage.warning('间隔设置无法生成任何时间段，请检查开始/结束/间隔')
       return
+    }
+  } else {
+    for (const slot of slots) {
+      if (!slot.fullDay && (!slot.startTime || !slot.endTime)) {
+        ElMessage.warning('请完善时间段，或勾选"全天"')
+        return
+      }
     }
   }
 
@@ -462,8 +536,8 @@ async function handleBatch() {
       ? new Date(batchForm.value.rushOpenTime).toISOString().slice(0, 19)
       : undefined
 
-    for (const slot of batchForm.value.timeSlots) {
-      const timeSlot = slot.fullDay ? '' : `${slot.startTime}-${slot.endTime}`
+    for (const slot of slots) {
+      const timeSlot = slot.fullDay ? null : `${slot.startTime}-${slot.endTime}`
       await scheduleApi.batchCreate({
         startDate: start.toISOString().slice(0, 10),
         endDate: end.toISOString().slice(0, 10),
@@ -475,7 +549,7 @@ async function handleBatch() {
         maxQueueSize: batchForm.value.maxQueueSize
       })
     }
-    ElMessage.success('批量创建完成')
+    ElMessage.success(`批量创建完成，共 ${slots.length} 个时间段`)
     batchDialogVisible.value = false
     fetchSchedules()
   } finally {
@@ -576,6 +650,8 @@ async function handleStatusChange(rushId: number, status: number) {
 }
 
 .form-tip { font-size: 12px; color: #909399; margin-top: 4px; }
+
+.interval-preview { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 
 .queue-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
 .queue-rank { font-size: 20px; font-weight: 700; color: #409eff; min-width: 36px; text-align: center; }
