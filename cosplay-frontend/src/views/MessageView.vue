@@ -34,14 +34,18 @@
             </el-button>
           </div>
 
-          <div v-for="msg in messages" :key="msg.id"
-            :class="['msg-row', msg.fromUserId === userStore.userInfo?.id ? 'msg-self' : 'msg-other']">
-            <el-avatar v-if="msg.fromUserId !== userStore.userInfo?.id"
-              :size="32" :src="activeConv?.avatar" />
-            <div class="msg-bubble">{{ msg.content }}</div>
-            <el-avatar v-if="msg.fromUserId === userStore.userInfo?.id"
-              :size="32" :src="userStore.userInfo?.avatar" />
-          </div>
+          <template v-for="(msg, index) in messages" :key="msg.id">
+            <div v-if="shouldShowTime(index)" class="time-divider">
+              {{ formatMsgTime(msg.createTime) }}
+            </div>
+            <div :class="['msg-row', msg.fromUserId === userStore.userInfo?.id ? 'msg-self' : 'msg-other']">
+              <el-avatar v-if="msg.fromUserId !== userStore.userInfo?.id"
+                :size="32" :src="activeConv?.avatar" />
+              <div class="msg-bubble">{{ msg.content }}</div>
+              <el-avatar v-if="msg.fromUserId === userStore.userInfo?.id"
+                :size="32" :src="userStore.userInfo?.avatar" />
+            </div>
+          </template>
         </div>
 
         <!-- 输入区 -->
@@ -182,6 +186,32 @@ async function sendMessage() {
   scrollBottom()
 }
 
+const WEEK_LABELS = ['日', '一', '二', '三', '四', '五', '六']
+
+function formatMsgTime(dateStr: string): string {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  const now = new Date()
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const sameYear = d.getFullYear() === now.getFullYear()
+  const sameDay = d.toDateString() === now.toDateString()
+  if (sameDay) return `今天 ${hm}`
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return `昨天 ${hm}`
+  const daysDiff = (now.getTime() - d.getTime()) / 86400000
+  if (daysDiff < 7) return `周${WEEK_LABELS[d.getDay()]} ${hm}`
+  if (sameYear) return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
+}
+
+function shouldShowTime(index: number): boolean {
+  if (index === 0) return true
+  const prev = new Date(messages.value[index - 1].createTime)
+  const curr = new Date(messages.value[index].createTime)
+  return curr.getTime() - prev.getTime() >= 5 * 60 * 1000
+}
+
 function scrollBottom() {
   nextTick(() => {
     if (messagesEl.value) {
@@ -281,6 +311,14 @@ watch(() => route.query.userId, async (newId) => {
 }
 
 .load-history { text-align: center; margin-bottom: 8px; }
+
+.time-divider {
+  text-align: center;
+  font-size: 12px;
+  color: #b0b3bb;
+  margin: 4px 0 8px;
+  user-select: none;
+}
 
 .msg-row {
   display: flex;
