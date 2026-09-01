@@ -597,8 +597,8 @@ onMounted(async () => {
 
   if (rushDate) {
     const s = scheduleMap.value[rushDate]
-    if (s) {
-      selectedSchedule.value = s
+    if (s && s.length > 0) {
+      selectedSchedule.value = s[0]
       bookDialogVisible.value = true
     }
   }

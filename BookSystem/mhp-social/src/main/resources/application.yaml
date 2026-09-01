@@ -68,6 +68,8 @@ dubbo:
     group: DUBBO
   consumer:
     check: false            # 启动时不检查 Provider 是否在线，解除服务间启动顺序依赖
+  reference:
+    check: false            # 关闭 Reference 级别的启动强制检查，防止 DubboDeployApplicationListener 阻断启动
   protocol:
     name: tri       # Triple 协议（HTTP/2），Dubbo3 推荐，与 gRPC 互通
     port: -1        # 随机端口，避免与 Spring Boot HTTP 8083 冲突

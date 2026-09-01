@@ -358,7 +358,6 @@ async function handleDeleteFromDay(id: number) {
 // ── 单个创建 ─────────────────────────────────────────────
 const createDialogVisible = ref(false)
 const createLoading = ref(false)
-const createFormRef = ref<FormInstance>()
 const createForm = ref({
   date: '',
   serviceType: null as number | null,
