@@ -57,6 +57,7 @@ canal:
 dubbo:
   application:
     name: mhp-account
+    serialize-check-status: WARN
   protocol:
     name: tri       # Triple 协议（HTTP/2），Dubbo3 推荐，与 gRPC 互通
     port: -1        # 随机端口，避免与 Spring Boot HTTP 8081 冲突

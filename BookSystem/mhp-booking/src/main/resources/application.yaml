@@ -65,6 +65,7 @@ server:
 dubbo:
   application:
     name: mhp-booking
+    serialize-check-status: WARN
   protocol:
     name: tri
     port: -1

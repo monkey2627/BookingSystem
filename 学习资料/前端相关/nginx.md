@@ -328,12 +328,13 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
     }
 
-    # WebSocket（STOMP over SockJS 需要升级协议）
-    location /ws/ {
+    # WebSocket（原生 STOMP，注意不要写成 /ws/，见"实际遇到的问题"一节）
+    location /ws {
         proxy_pass http://127.0.0.1:80;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
     }
 }
 
@@ -356,3 +357,66 @@ server {
 | 擅长 | SSL 卸载、静态文件、高吞吐 | 服务路由、业务过滤器 |
 
 Nginx 不替代 Gateway，两者各司其职：Nginx 解决"外网到服务器"的问题，Gateway 解决"服务器内部请求如何路由到各微服务"的问题。
+
+---
+
+## 八、实际遇到的问题
+
+### WebSocket 握手返回 301，连接失败
+
+**现象**
+
+部署上线后，浏览器控制台报错：
+
+```
+WebSocket connection to 'ws://host/ws' failed: Error during WebSocket handshake: Unexpected response code: 301
+```
+
+**根因：Nginx 的尾部斜杠自动重定向**
+
+Nginx 有一个内置行为：若请求路径是 `/foo`（无尾部斜杠），而配置中存在 `location /foo/`（有尾部斜杠），Nginx 会自动将 `/foo` 301 重定向到 `/foo/`。这个设计本是为了规范化目录访问 URL。
+
+问题配置：
+
+```nginx
+location /ws/ {   # 有尾部斜杠
+    proxy_pass ...;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    ...
+}
+```
+
+WebSocket 客户端连接的端点是 `ws://host/ws`（无尾部斜杠）。请求到达 Nginx 时：
+
+1. `/ws` 不匹配 `location /ws/`（前缀不符）
+2. Nginx 检测到存在 `location /ws/`，触发自动重定向
+3. 返回 `301 → /ws/`
+4. WebSocket 握手是特殊的 HTTP Upgrade 请求，收到 301 后不会重新发起 Upgrade，直接报连接失败
+
+**为什么同样写了 `/api/`，API 请求没有这个问题？**
+
+API 请求的路径永远带有子路径，例如 `/api/user/login`、`/api/booking`，这些路径自带 `/api/` 前缀（含斜杠），天然匹配 `location /api/`，Nginx 从不会收到裸 `/api` 请求。
+
+而 WebSocket 连接的是端点本身，路径就是 `/ws`，没有任何后缀，因此会触发重定向。
+
+原来用 SockJS 时也没遇到此问题，原因是 SockJS 连接时实际请求的路径是 `/ws/info`、`/ws/websocket` 等，天然带了斜杠。换成原生 WebSocket 后请求路径变成裸 `/ws`，才暴露了这个问题。
+
+**修复**
+
+去掉 location 的尾部斜杠：
+
+```nginx
+location /ws {    # 无尾部斜杠，直接匹配 /ws 路径
+    proxy_pass http://localhost:8083;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;
+}
+```
+
+```bash
+sudo nginx -s reload   # 热重载，不中断现有连接
+```
