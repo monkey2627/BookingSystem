@@ -14,12 +14,10 @@
     "axios": "^1.6.0",
     "element-plus": "^2.4.0",
     "pinia": "^2.1.0",
-    "sockjs-client": "^1.6.1",
     "vue": "^3.4.0",
     "vue-router": "^4.2.0"
   },
   "devDependencies": {
-    "@types/sockjs-client": "^1.5.4",
     "@vitejs/plugin-vue": "^4.5.0",
     "typescript": "^5.2.0",
     "vite": "^5.0.0",

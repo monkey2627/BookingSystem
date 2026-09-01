@@ -1,20 +1,15 @@
 /**
- * WebSocket composable — 基于 STOMP over SockJS
+ * WebSocket composable — 基于 STOMP over 原生 WebSocket
  *
  * 为什么用 STOMP 而不是原生 WebSocket？
  *   原生 WS 只是一个双向通道，没有消息路由、订阅、心跳等概念。
  *   STOMP 是运行在 WS 之上的协议，定义了 SUBSCRIBE/SEND/MESSAGE 帧，
  *   Spring WebSocket（@EnableWebSocketMessageBroker）原生支持 STOMP。
  *   这样前端只需订阅目的地（如 /user/queue/messages），不需要自己解析路由。
- *
- * 为什么用 SockJS？
- *   浏览器/代理/防火墙可能不支持原生 WS，SockJS 会自动降级到
- *   xhr-streaming → xhr-polling，保证在受限网络环境下也能工作。
  */
 
 import { ref, onUnmounted } from 'vue'
 import { Client } from '@stomp/stompjs'
-import SockJS from 'sockjs-client'
 import { useUserStore } from '@/stores/user'
 
 // 全局单例：整个应用只维护一个 STOMP 连接，避免重复握手
@@ -36,9 +31,9 @@ export function useWebSocket() {
     if (connectPromise) return connectPromise
 
     connectPromise = new Promise((resolve, reject) => {
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
       stompClient = new Client({
-        // SockJS 工厂：每次需要建立底层连接时调用
-        webSocketFactory: () => new SockJS('/ws'),
+        brokerURL: `${wsProtocol}://${window.location.host}/ws`,
 
         // 连接头：把 Sa-Token 的 token 放在 STOMP CONNECT 帧里
         // 后端握手拦截器从这里读取 token 验证身份
