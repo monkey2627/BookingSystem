@@ -61,9 +61,11 @@ server:
 dubbo:
   application:
     name: mhp-social
+    serialize-check-status: WARN
   protocol:
     name: tri
     port: -1
+    host: 10.2.0.6  # 固定注册到 Nacos 的 IP，防止选中 Docker 网桥地址 172.18.0.1
   registry:
     address: nacos://127.0.0.1:8848
     group: DUBBO

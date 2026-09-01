@@ -970,3 +970,108 @@ com.google.protobuf.GeneratedMessageLite$SerializedForm
 | Zookeeper | Jute（自研二进制，无 Protobuf）| 否 → 不存在此问题 |
 
 Zookeeper 与 Dubbo 的元数据交换不涉及 Protobuf，STRICT 模式的检查不会被触发。但项目中 Nacos 同时承担配置中心职责，换 Zookeeper 意味着引入额外的中间件，代价远大于加一行配置，不值得。
+
+---
+
+### 安装 Docker 的服务器：Dubbo 注册 IP 错误导致 RPC 超时
+
+**现象**
+
+服务启动正常，Nacos 控制台也显示服务已注册，但 Consumer 调用 Provider 时必现超时：
+
+```
+Timeout after 5000ms, Failed to send message to /172.18.0.1:PORT
+```
+
+**服务器上的四种 IP**
+
+理解问题前，先搞清楚服务器上同时存在的几个地址：
+
+```
+外网用户
+    │
+    ▼
+62.234.139.139（公网 IP）—— 全球可访问，Nginx 监听此 IP
+    │
+    ▼
+10.2.0.6（内网 IP）—— 云厂商分配的真实网卡，同 VPC 内机器可互访
+    │
+    ├── 127.0.0.1（回环地址）—— 仅本机进程可访问
+    │
+    └── 172.18.0.1（Docker 网桥）—— Docker 给宿主机建的虚拟网卡，
+                                     供容器与宿主机通信使用
+```
+
+| IP | 名字 | 谁能访问 |
+|---|---|---|
+| `62.234.139.139` | 公网 IP | 全球任何人 |
+| `10.2.0.6` | 内网 IP | 同 VPC 内机器（含自身） |
+| `127.0.0.1` | 回环地址 | 仅本机进程 |
+| `172.18.0.1` | Docker 网桥 | Docker 容器与宿主机之间 |
+
+**根因：Dubbo 自动选网卡选错了**
+
+Dubbo 启动时会自动扫描本机所有网卡，按规则选一个 IP 注册到 Nacos。安装 Docker 后，宿主机多出了 `docker0` 虚拟网卡（`172.18.0.1`），Dubbo 的选择算法在某些系统上会选中它：
+
+```
+account 注册到 Nacos："我在 172.18.0.1:PORT"
+
+booking 问 Nacos："account 在哪？"
+    → Nacos 回答：172.18.0.1:PORT
+
+booking 尝试连接 172.18.0.1:PORT
+    → Docker 的 iptables 规则干扰正常流量
+    → 连接超时 → RPC 调用失败 → 500
+```
+
+`172.18.0.1` 虽然在宿主机上存在，但 Docker 为容器网络配置了复杂的 `iptables` 转发规则，普通进程之间的连接经过这个地址时可能被拦截或绕路，导致超时。
+
+**修复**
+
+**不能用 `protocol.host`**，原因见下方"踩坑记录"。正确做法是用 `DUBBO_IP_TO_REGISTRY` 环境变量，只覆盖注册地址，不影响绑定地址：
+
+```bash
+DUBBO_IP_TO_REGISTRY=10.2.0.6 java -jar mhp-account.jar
+```
+
+同时清掉 Dubbo 的磁盘缓存，防止 Consumer 使用旧地址：
+
+```bash
+rm -f ~/.dubbo/dubbo-registry-*.cache
+```
+
+修复后的调用链：
+
+```
+account 注册到 Nacos："我在 10.2.0.6:PORT"（绑定地址仍为 0.0.0.0）
+
+booking 问 Nacos → 拿到 10.2.0.6:PORT → 连接成功
+```
+
+**为什么用内网 IP 而不是公网 IP 或 127.0.0.1**
+
+- `127.0.0.1`：只有本机能用，一旦服务拆分到不同机器就会失效
+- `62.234.139.139`（公网 IP）：流量绕出公网再回来，延迟高且可能被防火墙拦截
+- `10.2.0.6`（内网 IP）：同 VPC 内直连，延迟低，多机部署时也能正常工作，是正确选择
+
+**踩坑：`protocol.host` 会同时影响绑定地址，导致服务无法注册**
+
+第一次尝试用 `protocol.host: 10.2.0.6` 修复，结果更糟：
+
+```yaml
+# 错误写法
+dubbo:
+  protocol:
+    host: 10.2.0.6  # ← 看起来只是改注册地址，实际上还改了绑定地址
+```
+
+`protocol.host` 同时控制两件事：
+1. 注册到 Nacos 的 IP（想改的）
+2. Dubbo 服务器 socket 的绑定地址（不该动的）
+
+Dubbo 原本绑定 `0.0.0.0`（监听所有网卡），改成绑定特定 IP 后，如果该 IP 在当前系统上绑定异常，Dubbo 服务端口无法启动，导致服务根本没有注册到 Nacos（`hosts: []`）。Consumer 拿不到新地址，转而使用磁盘缓存里的旧地址（上一次运行的随机端口），连过去协议对不上，出现 `Cannot recognize protocol` 错误。
+
+| 配置方式 | 影响注册地址 | 影响绑定地址 | 结论 |
+|---|---|---|---|
+| `protocol.host: 10.2.0.6` | ✅ | ✅（危险） | 不要用 |
+| `DUBBO_IP_TO_REGISTRY=10.2.0.6` | ✅ | ❌（安全） | 正确方式 |
