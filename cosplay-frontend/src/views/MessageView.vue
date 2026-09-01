@@ -62,11 +62,13 @@
 
 <script setup lang="ts">
 import { ref, nextTick, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { messageApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import { useWebSocket } from '@/composables/useWebSocket'
 import type { MessageVO, ConversationVO } from '@/types'
 
+const route = useRoute()
 const userStore = useUserStore()
 const { connect, onMessage, clearUnread } = useWebSocket()
 
@@ -191,6 +193,24 @@ function scrollBottom() {
 onMounted(async () => {
   await connect()
   await fetchConversations()
+
+  // 从其他页面跳转时携带 ?userId=xxx&nickname=xxx，自动打开对应会话
+  const targetUserId = route.query.userId ? Number(route.query.userId) : null
+  if (targetUserId) {
+    let conv = conversations.value.find(c => c.userId === targetUserId)
+    if (!conv) {
+      // 无历史会话：创建占位条目，让用户可以直接发消息
+      conv = {
+        userId: targetUserId,
+        nickname: (route.query.nickname as string) || '对方',
+        avatar: '',
+        lastMessage: '',
+        unread: 0
+      }
+      conversations.value.unshift(conv)
+    }
+    await openConversation(conv)
+  }
 })
 </script>
 

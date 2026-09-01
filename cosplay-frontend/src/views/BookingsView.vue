@@ -108,9 +108,10 @@
             <template v-if="isMerchantView">
               <el-button v-if="booking.status === 0" type="primary" size="small"
                 @click="handleConfirm(booking.id)">确认</el-button>
-              <!-- TodoList 一键完成 -->
               <el-button v-if="booking.status === 2" type="success" size="small"
                 @click="handleComplete(booking.id)">✓ 完成</el-button>
+              <el-button size="small" plain
+                @click="router.push({ path: '/messages', query: { userId: booking.userId, nickname: booking.userNickname } })">联系客人</el-button>
             </template>
 
             <!-- 买家操作 -->
@@ -126,6 +127,8 @@
                 v-if="booking.status === 3 || booking.status === 4"
                 size="small" type="danger" plain
                 @click="openComplaintDialog(booking)">投诉</el-button>
+              <el-button size="small" plain
+                @click="router.push({ path: '/messages', query: { userId: booking.merchantUserId, nickname: booking.merchantNickname } })">联系商家</el-button>
             </template>
 
             <el-button v-if="canCancel(booking)" type="danger" size="small" plain

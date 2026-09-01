@@ -18,6 +18,9 @@ public class BookingVO {
 
     private Long merchantId;
 
+    /** 商家账号的 userId，用于客人发起聊天 */
+    private Long merchantUserId;
+
     private String merchantNickname;
 
     private Long userId;

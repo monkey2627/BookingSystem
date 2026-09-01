@@ -11,15 +11,18 @@
               text-color="#ff9900" />
             <div class="review-count">{{ merchant.reviewCount }} 条评价</div>
           </div>
-          <!-- 关注按钮：已登录且不是本页商家本人时可见（自己不能关注自己） -->
-          <el-button v-if="userStore.isLoggedIn && !isMerchantOwner"
-            :type="isFollowing ? 'default' : 'primary'"
-            :plain="isFollowing"
-            size="small"
-            :loading="followLoading"
-            @click="toggleFollow">
-            {{ isFollowing ? '已关注' : '+ 关注' }}
-          </el-button>
+          <!-- 操作按钮组：已登录且非本人时显示 -->
+          <div v-if="userStore.isLoggedIn && !isMerchantOwner" class="action-btns">
+            <el-button
+              :type="isFollowing ? 'default' : 'primary'"
+              :plain="isFollowing"
+              size="small"
+              :loading="followLoading"
+              @click="toggleFollow">
+              {{ isFollowing ? '已关注' : '+ 关注' }}
+            </el-button>
+            <el-button size="small" @click="goToChat">发消息</el-button>
+          </div>
         </div>
 
         <el-divider />
@@ -370,6 +373,11 @@ async function fetchFollowStatus() {
   isFollowing.value = await followApi.isFollowing(merchantId)
 }
 
+function goToChat() {
+  if (!merchant.value) return
+  router.push({ path: '/messages', query: { userId: merchant.value.userId, nickname: merchant.value.nickname } })
+}
+
 async function toggleFollow() {
   followLoading.value = true
   try {
@@ -626,6 +634,13 @@ onUnmounted(() => {
   gap: 16px;
   align-items: flex-start;
   margin-bottom: 16px;
+}
+
+.action-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .merchant-name {

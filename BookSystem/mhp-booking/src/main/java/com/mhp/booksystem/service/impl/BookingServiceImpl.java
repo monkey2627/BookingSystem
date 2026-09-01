@@ -327,6 +327,8 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
         Map<Long, String> merchantNicknameMap = merchants.stream()
                 .collect(Collectors.toMap(MerchantDTO::getId,
                         m -> merchantUserNicknameMap.getOrDefault(m.getUserId(), "")));
+        Map<Long, Long> merchantIdToUserIdMap = merchants.stream()
+                .collect(Collectors.toMap(MerchantDTO::getId, MerchantDTO::getUserId));
 
         List<UserDTO> bookingUsers = accountFeignClient.batchGetUsers(new ArrayList<>(userIdList)).getData();
         Map<Long, String> userNicknameMap = bookingUsers.stream()
@@ -347,6 +349,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
                 vo.setScheduleDate(s.getDate());
                 vo.setTimeSlot(s.getTimeSlot());
             }
+            vo.setMerchantUserId(merchantIdToUserIdMap.get(b.getMerchantId()));
             vo.setMerchantNickname(merchantNicknameMap.get(b.getMerchantId()));
             vo.setUserNickname(userNicknameMap.get(b.getUserId()));
             return vo;

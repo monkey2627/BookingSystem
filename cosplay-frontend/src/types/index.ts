@@ -102,6 +102,7 @@ export interface BookingVO {
   id: number
   orderNo: string
   merchantId: number
+  merchantUserId: number
   userId: number
   scheduleDate: string
   timeSlot: string
