@@ -61,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { messageApi } from '@/api'
 import { useUserStore } from '@/stores/user'
@@ -190,27 +190,34 @@ function scrollBottom() {
   })
 }
 
-onMounted(async () => {
-  await connect()
-  await fetchConversations()
-
-  // 从其他页面跳转时携带 ?userId=xxx&nickname=xxx，自动打开对应会话
+async function tryOpenFromQuery() {
   const targetUserId = route.query.userId ? Number(route.query.userId) : null
-  if (targetUserId) {
-    let conv = conversations.value.find(c => c.userId === targetUserId)
-    if (!conv) {
-      // 无历史会话：创建占位条目，让用户可以直接发消息
-      conv = {
-        userId: targetUserId,
-        nickname: (route.query.nickname as string) || '对方',
-        avatar: '',
-        lastMessage: '',
-        unread: 0
-      }
-      conversations.value.unshift(conv)
+  if (!targetUserId) return
+  let conv = conversations.value.find(c => c.userId === targetUserId)
+  if (!conv) {
+    conv = {
+      userId: targetUserId,
+      nickname: (route.query.nickname as string) || '对方',
+      avatar: '',
+      lastMessage: '',
+      unread: 0
     }
-    await openConversation(conv)
+    conversations.value.unshift(conv)
   }
+  try { await openConversation(conv) } catch { /* 无历史消息时正常 */ }
+}
+
+onMounted(async () => {
+  try { await connect() } catch { /* 连接失败不阻断页面加载 */ }
+  await fetchConversations()
+  await tryOpenFromQuery()
+})
+
+// 从 /messages 跳转到 /messages?userId=xxx（同组件内导航）时触发
+watch(() => route.query.userId, async (newId) => {
+  if (!newId) return
+  await fetchConversations()
+  await tryOpenFromQuery()
 })
 </script>
 
