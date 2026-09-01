@@ -35,6 +35,10 @@
 
         <div class="intro">{{ merchant.intro || '该商家暂未填写简介' }}</div>
 
+        <!-- 店铺已关闭提醒 -->
+        <el-alert v-if="merchant.status === 0" type="warning" :closable="false" show-icon
+          title="该商家已暂停接单" description="店铺已关闭，暂时无法提交新预约" style="margin-top: 12px" />
+
         <!-- 外部联系方式 -->
         <el-divider />
         <div class="links">
@@ -51,7 +55,18 @@
       </el-card>
 
       <!-- ── 右列：档期日历 ── -->
-      <el-card class="calendar-card">
+
+      <!-- 完全私密：不展示日历 -->
+      <el-card v-if="merchant.scheduleVisibility === 2" class="calendar-card calendar-private">
+        <el-empty description="该商家档期不对外公开" :image-size="80">
+          <template #description>
+            <span style="color:#909399;font-size:13px">该商家档期不对外公开，请通过联系方式私下咨询</span>
+          </template>
+        </el-empty>
+      </el-card>
+
+      <!-- 全公开 / 仅忙闲：显示日历 -->
+      <el-card v-else class="calendar-card">
         <!-- 月份导航 -->
         <div class="calendar-header">
           <el-button :icon="ArrowLeft" circle @click="prevMonth" />
@@ -67,6 +82,9 @@
           <span class="legend-item">
             <span class="legend-dot" style="background: #c0c4cc"></span>无档期
           </span>
+          <span v-if="merchant.scheduleVisibility === 1" class="legend-item privacy-tip">
+            （商家已开启隐私模式，仅显示忙闲状态）
+          </span>
         </div>
 
         <!-- 星期表头 -->
@@ -75,14 +93,17 @@
         </div>
 
         <!-- 日历格子 -->
-        <!-- calendarDays 包含本月所有天 + 月初前的空白占位 -->
         <div class="calendar-grid">
           <div v-for="(day, idx) in calendarDays" :key="idx"
             :class="['day-cell', day ? getDayClass(day.dateStr) : 'empty']"
             @click="day && handleDayClick(day.dateStr)">
             <template v-if="day">
               <span class="day-num">{{ day.num }}</span>
-              <span class="day-dot" v-if="scheduleMap[day.dateStr]"
+              <!-- 抢档期倒计时：还未开放时显示倒计时 -->
+              <span v-if="scheduleMap[day.dateStr] && isRushPending(scheduleMap[day.dateStr])"
+                class="rush-countdown">{{ formatCountdown(scheduleMap[day.dateStr]) }}</span>
+              <!-- 普通状态点 -->
+              <span v-else-if="scheduleMap[day.dateStr]" class="day-dot"
                 :style="{ background: SCHEDULE_STATUS_MAP[scheduleMap[day.dateStr].status]?.color }" />
             </template>
           </div>
@@ -209,7 +230,7 @@
         <!-- 抢档期：显示当前排队人数 -->
         <template v-else>
           <el-alert type="warning" :closable="false" show-icon style="margin-top: 12px">
-            当前排队：{{ selectedSchedule.queueSize }} / {{ selectedSchedule.maxQueueSize }} 人
+            当前排队：{{ selectedSchedule.currentQueueSize ?? 0 }} / {{ selectedSchedule.maxQueueSize }} 人
           </el-alert>
         </template>
       </div>
@@ -226,7 +247,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowRight, Location } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -242,6 +263,10 @@ const merchantId = Number(route.params.id)
 const pageLoading = ref(false)
 const merchant = ref<MerchantVO | null>(null)
 const schedules = ref<ScheduleVO[]>([])
+
+// 每秒刷新，驱动抢档期倒计时重新渲染
+const nowTime = ref(Date.now())
+let timerInterval: ReturnType<typeof setInterval> | null = null
 
 // 当前显示的月份，格式 'YYYY-MM'
 const now = new Date()
@@ -270,9 +295,27 @@ const calendarDays = computed(() => {
   return days
 })
 
+function isRushPending(s: ScheduleVO): boolean {
+  return s.bookType === 1 && s.rushOpenTime != null && new Date(s.rushOpenTime).getTime() > nowTime.value
+}
+
+function formatCountdown(s: ScheduleVO): string {
+  if (!s.rushOpenTime) return ''
+  const ms = new Date(s.rushOpenTime).getTime() - nowTime.value
+  if (ms <= 0) return '开放中'
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const sec = totalSec % 60
+  if (h >= 24) return `${Math.floor(h / 24)}天后`
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+}
+
 function getDayClass(dateStr: string): string {
   const s = scheduleMap.value[dateStr]
   if (!s) return 'day-empty'
+  if (isRushPending(s)) return 'day-rush'
   if (s.status === 0) return 'day-available'
   if (s.status === 1) return 'day-booked'
   return 'day-unavailable'
@@ -367,6 +410,15 @@ const bookLoading = ref(false)
 function handleDayClick(dateStr: string) {
   const s = scheduleMap.value[dateStr]
   if (!s || s.status !== 0) return
+  if (merchant.value?.scheduleVisibility === 2) return
+  if (isRushPending(s)) {
+    ElMessage.info(`该抢档期尚未开放，还剩 ${formatCountdown(s)}`)
+    return
+  }
+  if (merchant.value?.status === 0) {
+    ElMessage.warning('该商家已暂停接单，无法预约')
+    return
+  }
   if (!userStore.isLoggedIn) {
     ElMessage.warning('请先登录')
     router.push('/login')
@@ -477,6 +529,12 @@ async function fetchSchedules() {
 }
 
 onMounted(async () => {
+  // 分享链接跳转：?rushDate=YYYY-MM-DD，先跳到对应月份再自动打开弹窗
+  const rushDate = route.query.rushDate as string | undefined
+  if (rushDate) {
+    currentMonth.value = rushDate.slice(0, 7)
+  }
+
   pageLoading.value = true
   await Promise.all([
     fetchMerchant(),
@@ -487,6 +545,19 @@ onMounted(async () => {
     fetchMerchantPosts()
   ])
   pageLoading.value = false
+  timerInterval = setInterval(() => { nowTime.value = Date.now() }, 1000)
+
+  if (rushDate) {
+    const s = scheduleMap.value[rushDate]
+    if (s) {
+      selectedSchedule.value = s
+      bookDialogVisible.value = true
+    }
+  }
+})
+
+onUnmounted(() => {
+  if (timerInterval) clearInterval(timerInterval)
 })
 </script>
 
@@ -542,6 +613,8 @@ onMounted(async () => {
 
 .legend-item { display: flex; align-items: center; gap: 4px; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.privacy-tip { color: #909399; font-size: 12px; }
+.calendar-private { display: flex; align-items: center; justify-content: center; min-height: 200px; }
 
 .week-header {
   display: grid;
@@ -579,6 +652,9 @@ onMounted(async () => {
 .day-available:hover { background: #e1f3d8; }
 .day-booked { color: #e6a23c; background: #fdf6ec; }
 .day-unavailable { color: #909399; text-decoration: line-through; }
+.day-rush { cursor: pointer; background: #fdf6ec; color: #e6a23c; font-weight: 500; }
+.day-rush:hover { background: #faecd8; }
+.rush-countdown { font-size: 9px; color: #e6a23c; line-height: 1; margin-top: 2px; font-weight: 600; white-space: nowrap; }
 
 .book-dialog-content p { margin-bottom: 8px; }
 

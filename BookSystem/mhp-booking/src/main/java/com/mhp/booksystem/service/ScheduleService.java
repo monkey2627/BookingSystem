@@ -25,4 +25,6 @@ public interface ScheduleService extends IService<Schedule> {
     List<RushRecordVO> getQueue(Long scheduleId);
 
     void updateRushStatus(Long rushId, Integer status);
+
+    List<ScheduleVO> getRushSchedulesByMerchants(List<Long> merchantIds);
 }

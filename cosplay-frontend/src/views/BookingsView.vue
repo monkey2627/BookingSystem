@@ -34,8 +34,15 @@
       </el-tabs>
     </div>
 
+    <!-- ── 未开通店铺提示（仅卖家视角） ── -->
+    <div v-if="isMerchantView && merchantId === -1" class="no-merchant-wrap">
+      <el-empty description="您还没有开通店铺，暂无收到的预约">
+        <el-button type="primary" @click="router.push('/merchant/profile')">去开通店铺</el-button>
+      </el-empty>
+    </div>
+
     <!-- ── 空状态 ── -->
-    <div v-if="bookings.length === 0 && !loading" class="empty-wrap">
+    <div v-else-if="bookings.length === 0 && !loading" class="empty-wrap">
       <el-empty description="暂无订单" />
     </div>
 
@@ -142,16 +149,30 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { User, Shop, Calendar, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { bookingApi, reviewApi, complaintApi } from '@/api'
+import { bookingApi, reviewApi, complaintApi, merchantApi } from '@/api'
 import { BOOKING_STATUS_MAP, SERVICE_TYPE_MAP, type BookingVO } from '@/types'
 
 const route = useRoute()
+const router = useRouter()
 
 const isMerchantView = computed(() => route.name === 'receivedBookings')
+
+// null=加载中，-1=无商家资料，正数=已有商家
+const merchantId = ref<number | null>(null)
+
+async function checkMerchant() {
+  if (!isMerchantView.value) return
+  try {
+    const info = await merchantApi.getMyInfo()
+    merchantId.value = info.id
+  } catch {
+    merchantId.value = -1
+  }
+}
 
 // ── 筛选状态 ──────────────────────────────────────────────
 const selectedType = ref<number | null>(null)
@@ -206,10 +227,14 @@ async function fetchBookings(cursor: number | null = null) {
 
 function loadMore() { fetchBookings(nextCursor.value) }
 
-// 切换买/卖视角时重置筛选
-watch(isMerchantView, () => {
+// 切换买/卖视角时重置筛选，切到卖家视角时顺带检查是否有商家资料
+watch(isMerchantView, async (isMerchant) => {
   selectedType.value = null
   selectedStatusStr.value = 'all'
+  if (isMerchant) {
+    await checkMerchant()
+    if (merchantId.value === -1) return
+  }
   fetchBookings(null)
 })
 
@@ -322,7 +347,11 @@ async function handleSubmitReview() {
   }
 }
 
-onMounted(() => fetchBookings())
+onMounted(async () => {
+  await checkMerchant()
+  if (isMerchantView.value && merchantId.value === -1) return
+  fetchBookings()
+})
 </script>
 
 <style scoped>
@@ -400,4 +429,5 @@ onMounted(() => fetchBookings())
 .load-more { text-align: center; margin-top: 24px; }
 .no-more { text-align: center; color: #c0c4cc; font-size: 13px; margin-top: 24px; }
 .empty-wrap { padding: 40px 0; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.no-merchant-wrap { padding: 60px 0; display: flex; justify-content: center; }
 </style>

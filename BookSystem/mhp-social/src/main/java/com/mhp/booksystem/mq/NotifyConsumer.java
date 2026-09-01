@@ -1,5 +1,8 @@
 package com.mhp.booksystem.mq;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mhp.booksystem.entity.Follow;
+import com.mhp.booksystem.mapper.FollowMapper;
 import com.rabbitmq.client.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,6 +13,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static com.mhp.booksystem.config.RabbitConfig.NOTIFY_QUEUE;
@@ -34,6 +38,7 @@ public class NotifyConsumer {
 
     private final StringRedisTemplate stringRedisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
+    private final FollowMapper followMapper;
 
     @RabbitListener(queues = NOTIFY_QUEUE)
     public void onNotify(NotifyMessage msg, Message rawMsg, Channel channel) throws IOException {
@@ -50,16 +55,31 @@ public class NotifyConsumer {
         }
 
         try {
-            // convertAndSendToUser 内部会把 userId 和 /queue/notify 拼成
-            // /user/{userId}/queue/notify，Spring 的 UserDestinationResolver
-            // 确保只有该 userId 的 WebSocket 会话能收到
-            messagingTemplate.convertAndSendToUser(
-                    msg.getToUserId().toString(),
-                    "/queue/notify",
-                    msg
-            );
-            channel.basicAck(tag, false); // 推送成功，确认消息出队
-            log.info("[MQ] 消息处理成功 msgId={} type={}", msg.getMsgId(), msg.getType());
+            if ("RUSH_CREATED".equals(msg.getType()) || "RUSH_REMINDER".equals(msg.getType())) {
+                // fan-out：查所有关注该商家的用户，逐一推 WebSocket
+                List<Follow> followers = followMapper.selectList(
+                        new LambdaQueryWrapper<Follow>()
+                                .eq(Follow::getMerchantId, msg.getMerchantId())
+                );
+                for (Follow f : followers) {
+                    messagingTemplate.convertAndSendToUser(
+                            f.getUserId().toString(),
+                            "/queue/notify",
+                            msg
+                    );
+                }
+                log.info("[MQ] 抢档 fan-out type={} merchantId={} 推送 {} 位关注者",
+                        msg.getType(), msg.getMerchantId(), followers.size());
+            } else {
+                // 普通单用户通知
+                messagingTemplate.convertAndSendToUser(
+                        msg.getToUserId().toString(),
+                        "/queue/notify",
+                        msg
+                );
+                log.info("[MQ] 消息处理成功 msgId={} type={}", msg.getMsgId(), msg.getType());
+            }
+            channel.basicAck(tag, false);
         } catch (Exception e) {
             // 推送失败：删除幂等 key（允许下次重试），nack 不重入队（直接进死信队列）
             stringRedisTemplate.delete(idempotentKey);

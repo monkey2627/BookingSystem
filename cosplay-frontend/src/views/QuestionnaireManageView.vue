@@ -1,5 +1,10 @@
 <template>
-  <div class="page-container">
+  <div v-if="merchantId === -1" class="no-merchant-tip">
+    <el-empty description="您还没有开通店铺">
+      <el-button type="primary" @click="$router.push('/merchant/profile')">去开通店铺</el-button>
+    </el-empty>
+  </div>
+  <div class="page-container" v-else-if="merchantId !== null">
     <div class="page-header">
       <h2 class="page-title">问卷管理</h2>
       <el-button type="primary" @click="openCreate">新建问卷</el-button>
@@ -97,11 +102,12 @@ import { ref, nextTick, onMounted } from 'vue'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import { questionnaireApi } from '@/api'
+import { questionnaireApi, merchantApi } from '@/api'
 import type { QuestionnaireVO, QuestionItem } from '@/types'
 
 const TYPE_LABEL: Record<string, string> = { text: '填空题', radio: '单选题', checkbox: '多选题' }
 
+const merchantId = ref<number | null>(null)
 const loading = ref(false)
 const templates = ref<QuestionnaireVO[]>([])
 
@@ -211,7 +217,16 @@ async function handleSave() {
   }
 }
 
-onMounted(fetchTemplates)
+onMounted(async () => {
+  try {
+    const info = await merchantApi.getMyInfo()
+    merchantId.value = info.id
+  } catch {
+    merchantId.value = -1
+    return
+  }
+  fetchTemplates()
+})
 </script>
 
 <style scoped>
@@ -225,4 +240,5 @@ onMounted(fetchTemplates)
 .q-item { background: #f9f9f9; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
 .q-row  { display: flex; align-items: center; gap: 4px; }
 .q-options { margin-top: 8px; padding-left: 4px; }
+.no-merchant-tip { display: flex; justify-content: center; align-items: center; min-height: 60vh; }
 </style>

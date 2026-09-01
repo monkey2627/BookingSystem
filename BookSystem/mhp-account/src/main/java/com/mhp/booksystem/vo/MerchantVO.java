@@ -42,4 +42,10 @@ public class MerchantVO {
     private BigDecimal priceMax;
 
     private String bookingNotice;
+
+    /** 店铺状态：1=营业中，0=已关闭 */
+    private Integer status;
+
+    /** 档期可见度：0=全公开，1=仅忙闲，2=完全私密 */
+    private Integer scheduleVisibility;
 }

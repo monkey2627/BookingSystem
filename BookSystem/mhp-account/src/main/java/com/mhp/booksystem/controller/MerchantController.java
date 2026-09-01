@@ -41,4 +41,10 @@ public class MerchantController {
     public Result<MerchantVO> getMyInfo() {
         return Result.ok(merchantService.getMyInfo());
     }
+
+    @PutMapping("/status")
+    public Result<?> setShopStatus(@RequestParam int status) {
+        merchantService.setShopStatus(status);
+        return Result.ok();
+    }
 }

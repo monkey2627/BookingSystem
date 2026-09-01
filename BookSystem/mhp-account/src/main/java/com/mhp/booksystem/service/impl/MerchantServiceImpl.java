@@ -114,6 +114,7 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
         if (dto.getPriceMin() != null) merchant.setPriceMin(dto.getPriceMin());
         if (dto.getPriceMax() != null) merchant.setPriceMax(dto.getPriceMax());
         if (dto.getBookingNotice() != null) merchant.setBookingNotice(dto.getBookingNotice());
+        if (dto.getScheduleVisibility() != null) merchant.setScheduleVisibility(dto.getScheduleVisibility());
 
         // saveOrUpdate() 来自父类 ServiceImpl：merchant.id 不为 null → UPDATE，否则 → INSERT
         saveOrUpdate(merchant);
@@ -318,12 +319,12 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
     /** 构建城市 + 服务类型 filter 列表（为空则返回空列表，bool query 的 filter 接受空列表） */
     private List<Query> buildFilters(String city, Integer serviceType) {
         List<Query> filters = new ArrayList<>();
+        // 只展示营业中的商家（status=1），关闭店铺的商家不出现在搜索结果
+        filters.add(Query.of(q -> q.term(t -> t.field("status").value(1))));
         if (StringUtils.hasText(city)) {
-            // term query：精确匹配 keyword 字段，不分词
             filters.add(Query.of(q -> q.term(t -> t.field("city").value(city))));
         }
         if (serviceType != null) {
-            // serviceTypes 是 integer 数组，term query 匹配"数组中包含该值"
             filters.add(Query.of(q -> q.term(t -> t.field("serviceTypes").value(serviceType))));
         }
         return filters;
@@ -428,6 +429,18 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
         vo.setPriceMin(merchant.getPriceMin());
         vo.setPriceMax(merchant.getPriceMax());
         vo.setBookingNotice(merchant.getBookingNotice());
+        vo.setStatus(merchant.getStatus() != null ? merchant.getStatus() : 1);
+        vo.setScheduleVisibility(merchant.getScheduleVisibility() != null ? merchant.getScheduleVisibility() : 0);
         return vo;
+    }
+
+    @Override
+    public void setShopStatus(int status) {
+        Long userId = StpUtil.getLoginIdAsLong();
+        Merchant merchant = lambdaQuery().eq(Merchant::getUserId, userId).one();
+        if (merchant == null) throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);
+        merchant.setStatus(status);
+        updateById(merchant);
+        stringRedisTemplate.delete(CACHE_KEY_PREFIX + merchant.getId());
     }
 }

@@ -56,8 +56,39 @@ public class MQSender {
         send(toUserId, bookingId, "SCHEDULE_REMINDER", "温馨提醒：您有一个明日档期（" + dateStr + "），请注意时间安排。");
     }
 
+    /** 商家创建抢档期后通知所有关注者（consumer 端 fan-out） */
+    public void sendRushCreated(Long merchantId, String merchantNickname, Long scheduleId, String dateStr) {
+        NotifyMessage msg = new NotifyMessage();
+        msg.setMsgId(IdUtil.fastSimpleUUID());
+        msg.setType("RUSH_CREATED");
+        msg.setMerchantId(merchantId);
+        msg.setScheduleId(scheduleId);
+        msg.setScheduleDate(dateStr);
+        msg.setContent(merchantNickname + " 发布了 " + dateStr + " 的抢档期，快去抢！");
+        rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE, "notify.rush_created", msg);
+        log.info("[MQ] 发送抢档通知 merchantId={} scheduleId={} date={}", merchantId, scheduleId, dateStr);
+    }
+
+    /** 抢档期开放前 5 分钟提醒所有关注者（consumer 端 fan-out） */
+    public void sendRushReminder(Long merchantId, String merchantNickname, Long scheduleId, String dateStr) {
+        NotifyMessage msg = new NotifyMessage();
+        msg.setMsgId(IdUtil.fastSimpleUUID());
+        msg.setType("RUSH_REMINDER");
+        msg.setMerchantId(merchantId);
+        msg.setScheduleId(scheduleId);
+        msg.setScheduleDate(dateStr);
+        msg.setContent(merchantNickname + " 的 " + dateStr + " 抢档期将在 5 分钟后开放，快去主页准备抢！");
+        rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE, "notify.rush_reminder", msg);
+        log.info("[MQ] 发送抢档倒计时提醒 merchantId={} scheduleId={} date={}", merchantId, scheduleId, dateStr);
+    }
+
     private void send(Long toUserId, Long bookingId, String type, String content) {
-        NotifyMessage msg = new NotifyMessage(IdUtil.fastSimpleUUID(), type, toUserId, bookingId, content);
+        NotifyMessage msg = new NotifyMessage();
+        msg.setMsgId(IdUtil.fastSimpleUUID());
+        msg.setType(type);
+        msg.setToUserId(toUserId);
+        msg.setBookingId(bookingId);
+        msg.setContent(content);
         // routing key 格式：notify.booking_confirmed / notify.booking_cancelled 等
         // 交换机的绑定 key 是 "notify.#"，# 通配任意词，全部路由到 notify.queue
         String routingKey = "notify." + type.toLowerCase();

@@ -6,18 +6,44 @@
 
       <!-- 导航链接 -->
       <nav class="nav-links">
-        <router-link to="/home">发现商家</router-link>
-        <router-link to="/feed">动态广场</router-link>
+        <template v-if="!userStore.isLoggedIn">
+          <router-link to="/home">发现商家</router-link>
+          <router-link to="/feed">动态广场</router-link>
+        </template>
 
-        <!-- 登录后所有用户可见 -->
-        <template v-if="userStore.isLoggedIn">
-          <router-link to="/orders/my">我预定的</router-link>
-          <router-link to="/orders/received">我卖出的</router-link>
+        <template v-else>
+          <!-- 我预订的（客户功能入口） -->
+          <el-dropdown @command="router.push($event)">
+            <span class="nav-dropdown-trigger" :class="{ active: isCustomerPage }">
+              我预订的 <el-icon class="el-icon--right"><arrow-down /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="/home">发现商家</el-dropdown-item>
+                <el-dropdown-item command="/orders/my">我的预约</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <!-- 我卖出的（商家功能入口） -->
+          <el-dropdown @command="router.push($event)">
+            <span class="nav-dropdown-trigger" :class="{ active: isMerchantPage }">
+              我卖出的 <el-icon class="el-icon--right"><arrow-down /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="/orders/received">收到的预约</el-dropdown-item>
+                <el-dropdown-item divided command="/merchant/profile">我的店铺</el-dropdown-item>
+                <el-dropdown-item command="/schedule/manage">档期管理</el-dropdown-item>
+                <el-dropdown-item command="/dashboard">数据看板</el-dropdown-item>
+                <el-dropdown-item command="/questionnaire/manage">问卷管理</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <router-link to="/feed">动态广场</router-link>
           <router-link to="/follows">我的关注</router-link>
-          <router-link to="/merchant/profile">我的店铺</router-link>
-          <router-link to="/schedule/manage">档期管理</router-link>
-          <router-link to="/dashboard">数据看板</router-link>
-          <router-link to="/questionnaire/manage">问卷管理</router-link>
+          <router-link to="/rush">抢档大厅</router-link>
           <router-link to="/ai">AI助手</router-link>
         </template>
       </nav>
@@ -54,7 +80,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bell } from '@element-plus/icons-vue'
+import { Bell, ArrowDown } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { ElMessageBox } from 'element-plus'
 import { unreadCount, useWebSocket } from '@/composables/useWebSocket'
@@ -66,6 +92,12 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const isLoginPage = computed(() => route.name === 'login')
+
+const isCustomerPage = computed(() =>
+  ['/home', '/orders/my'].includes(route.path))
+
+const isMerchantPage = computed(() =>
+  ['/orders/received', '/merchant/profile', '/schedule/manage', '/dashboard', '/questionnaire/manage'].includes(route.path))
 
 onMounted(async () => {
   if (userStore.isLoggedIn) {
@@ -129,6 +161,27 @@ async function handleCommand(command: string) {
   font-size: 14px;
   transition: color 0.2s;
   white-space: nowrap;
+}
+
+.nav-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #606266;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.2s;
+  outline: none;
+}
+
+.nav-dropdown-trigger:hover,
+.nav-dropdown-trigger.active {
+  color: #409eff;
+}
+
+.nav-dropdown-trigger.active {
+  font-weight: 500;
 }
 
 .nav-links a.router-link-active {

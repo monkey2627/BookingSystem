@@ -96,6 +96,12 @@ const router = createRouter({
       name: 'aiAssistant',
       component: () => import('@/views/AiAssistantView.vue'),
       meta: { requireAuth: true }
+    },
+    {
+      path: '/rush',
+      name: 'rushLobby',
+      component: () => import('@/views/RushLobbyView.vue'),
+      meta: { requireAuth: true }
     }
   ]
 })

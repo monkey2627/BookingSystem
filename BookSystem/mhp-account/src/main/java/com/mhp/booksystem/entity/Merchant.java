@@ -51,6 +51,12 @@ public class Merchant {
     /** 预约须知，展示在预约对话框顶部，最多 500 字 */
     private String bookingNotice;
 
+    /** 店铺状态：1=营业中，0=已关闭；关闭后不出现在搜索结果，但主页仍可访问 */
+    private Integer status;
+
+    /** 档期可见度：0=全公开（默认），1=仅忙闲（隐藏时间段），2=完全私密（日历不对外显示） */
+    private Integer scheduleVisibility;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

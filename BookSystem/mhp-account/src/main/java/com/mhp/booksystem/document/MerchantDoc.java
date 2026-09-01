@@ -122,4 +122,8 @@ public class MerchantDoc {
 
     @Field(type = FieldType.Double)
     private Double priceMax;
+
+    /** 店铺状态：1=营业中，0=已关闭；搜索时过滤掉 0，但 ES 文档保留便于调试 */
+    @Field(type = FieldType.Integer)
+    private Integer status;
 }

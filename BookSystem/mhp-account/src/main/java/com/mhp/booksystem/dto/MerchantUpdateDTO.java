@@ -49,4 +49,7 @@ public class MerchantUpdateDTO {
 
     @Size(max = 500, message = "预约须知不能超过500字")
     private String bookingNotice;
+
+    /** 档期可见度：0=全公开，1=仅忙闲，2=完全私密；null 表示不修改 */
+    private Integer scheduleVisibility;
 }

@@ -15,6 +15,7 @@ import com.mhp.booksystem.feign.AccountFeignClient;
 import com.mhp.booksystem.rpc.RpcMerchantService;
 import com.mhp.booksystem.mapper.RushRecordMapper;
 import com.mhp.booksystem.mapper.ScheduleMapper;
+import com.mhp.booksystem.mq.MQSender;
 import com.mhp.booksystem.service.ScheduleService;
 import com.mhp.booksystem.vo.RushRecordVO;
 import com.mhp.booksystem.vo.RushResultVO;
@@ -45,6 +46,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
     private final RushRecordMapper rushRecordMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final AccountFeignClient accountFeignClient;
+    private final MQSender mqSender;
 
     @DubboReference(version = "1.0.0")
     private RpcMerchantService rpcMerchantService;
@@ -89,6 +91,12 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
         schedule.setRushOpenTime(dto.getRushOpenTime());
         schedule.setMaxQueueSize(dto.getMaxQueueSize() != null ? dto.getMaxQueueSize() : 10);
         save(schedule);
+
+        if (dto.getBookType() == 1) {
+            UserDTO user = accountFeignClient.getUser(merchant.getUserId()).getData();
+            String nickname = (user != null && user.getNickname() != null) ? user.getNickname() : "商家";
+            mqSender.sendRushCreated(merchant.getId(), nickname, schedule.getId(), dto.getDate().toString());
+        }
     }
 
     @Override
@@ -289,6 +297,34 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
         }
         record.setStatus(status);
         rushRecordMapper.updateById(record);
+    }
+
+    @Override
+    public List<ScheduleVO> getRushSchedulesByMerchants(List<Long> merchantIds) {
+        if (merchantIds == null || merchantIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        LocalDate today = LocalDate.now();
+        LocalDate twoMonthsLater = today.plusMonths(2);
+
+        List<Schedule> schedules = lambdaQuery()
+                .in(Schedule::getMerchantId, merchantIds)
+                .eq(Schedule::getBookType, 1)
+                .eq(Schedule::getStatus, 0)
+                .between(Schedule::getDate, today, twoMonthsLater)
+                .orderByAsc(Schedule::getRushOpenTime)
+                .orderByAsc(Schedule::getDate)
+                .list();
+
+        return schedules.stream().map(s -> {
+            ScheduleVO vo = toVO(s);
+            long count = rushRecordMapper.selectCount(
+                    new LambdaQueryWrapper<RushRecord>()
+                            .eq(RushRecord::getScheduleId, s.getId())
+                            .eq(RushRecord::getStatus, 0));
+            vo.setCurrentQueueSize((int) count);
+            return vo;
+        }).collect(Collectors.toList());
     }
 
     private ScheduleVO toVO(Schedule s) {

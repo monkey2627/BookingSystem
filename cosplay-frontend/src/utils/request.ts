@@ -3,6 +3,14 @@ import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import type { Result } from '@/types'
 
+// 扩展 Axios 请求配置类型，支持 silentError 选项
+// silentError=true：业务错误不弹 toast，由调用方自己处理（适用于"预期内可能失败"的初始化请求）
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    silentError?: boolean
+  }
+}
+
 // 为什么要封装 Axios 而不是直接用？
 //   每个接口都需要带 token header、处理 401 跳登录、解包 {code, message, data} 结构。
 //   如果在每个 API 调用处重复这些逻辑，一旦 token header 名字改了就要改几十个地方。
@@ -47,8 +55,10 @@ request.interceptors.response.use(
       return Promise.reject(new Error('未登录'))
     }
 
-    // 其他业务错误：弹出后端返回的错误信息
-    ElMessage.error(res.message || '操作失败')
+    // 其他业务错误：弹出后端返回的错误信息（silentError=true 时跳过 toast，由调用方处理）
+    if (!response.config.silentError) {
+      ElMessage.error(res.message || '操作失败')
+    }
     return Promise.reject(new Error(res.message))
   },
   error => {

@@ -1,5 +1,10 @@
 <template>
-  <div class="page-container">
+  <div v-if="merchantId === -1" class="no-merchant-tip">
+    <el-empty description="您还没有开通店铺">
+      <el-button type="primary" @click="$router.push('/merchant/profile')">去开通店铺</el-button>
+    </el-empty>
+  </div>
+  <div class="page-container" v-else-if="merchantId !== null">
     <div class="page-header">
       <h2 class="page-title">档期管理</h2>
       <div class="header-actions">
@@ -103,6 +108,11 @@
 
       <template #footer>
         <template v-if="selectedSchedule">
+          <!-- 分享按钮仅对抢档期显示 -->
+          <el-button v-if="selectedSchedule.bookType === 1"
+            type="info" plain @click="handleShare(selectedSchedule)">
+            分享链接
+          </el-button>
           <el-button v-if="selectedSchedule.status === 0" type="danger" plain
             :loading="deleteLoading" @click="handleDelete(selectedSchedule.id)">
             删除档期
@@ -189,12 +199,14 @@ import { scheduleApi, merchantApi } from '@/api'
 import { RUSH_STATUS_MAP, SERVICE_TYPE_MAP, type ScheduleVO, type RushRecordVO } from '@/types'
 
 // ── 当前商家 ID ───────────────────────────────────────────
-const merchantId = ref<number | null>(null)
+const merchantId = ref<number | null>(null)  // null=加载中，-1=无商家资料，正数=已有商家
 onMounted(async () => {
   try {
     const myInfo = await merchantApi.getMyInfo()
     merchantId.value = myInfo.id
-  } catch { /* 非商家用户忽略 */ }
+  } catch {
+    merchantId.value = -1
+  }
   await fetchSchedules()
 })
 
@@ -390,6 +402,16 @@ async function openQueueDrawer(s: ScheduleVO) {
   }
 }
 
+function handleShare(s: ScheduleVO) {
+  if (!merchantId.value || merchantId.value < 0) return
+  const url = `${window.location.origin}/merchant/${merchantId.value}?rushDate=${s.date}`
+  navigator.clipboard.writeText(url).then(() => {
+    ElMessage.success('链接已复制，快分享给想抢档的朋友吧！')
+  }).catch(() => {
+    ElMessage.info('请手动复制：' + url)
+  })
+}
+
 async function handleStatusChange(rushId: number, status: number) {
   try {
     await scheduleApi.updateRushStatus(rushId, status)
@@ -447,4 +469,5 @@ async function handleStatusChange(rushId: number, status: number) {
 .queue-info { flex: 1; }
 .queue-name { font-weight: 500; font-size: 14px; }
 .queue-time { font-size: 12px; color: #909399; }
+.no-merchant-tip { display: flex; justify-content: center; align-items: center; min-height: 60vh; }
 </style>

@@ -1,5 +1,10 @@
 <template>
-  <div class="page-container" v-loading="statsLoading">
+  <div v-if="merchantId === -1" class="no-merchant-tip">
+    <el-empty description="您还没有开通店铺">
+      <el-button type="primary" @click="$router.push('/merchant/profile')">去开通店铺</el-button>
+    </el-empty>
+  </div>
+  <div class="page-container" v-else-if="merchantId !== null" v-loading="statsLoading">
     <h2 class="page-title">数据看板</h2>
 
     <!-- ── 数据统计卡片 ── -->
@@ -98,6 +103,9 @@ import { ElMessage } from 'element-plus'
 import { merchantApi, scheduleApi } from '@/api'
 import { RUSH_STATUS_MAP, type MerchantStatsVO, type ScheduleVO, type RushRecordVO } from '@/types'
 
+// null=加载中，-1=无商家资料，正数=已有商家（复用 ScheduleManageView 的模式）
+const merchantId = ref<number | null>(null)
+
 // ── 统计数据 ──────────────────────────────────────────────
 const stats = ref<MerchantStatsVO | null>(null)
 const statsLoading = ref(false)
@@ -149,6 +157,14 @@ async function updateStatus(rushId: number, status: number) {
 }
 
 onMounted(async () => {
+  try {
+    const info = await merchantApi.getMyInfo()
+    merchantId.value = info.id
+    myMerchantId.value = info.id
+  } catch {
+    merchantId.value = -1
+    return
+  }
   await Promise.all([fetchStats(), fetchRushSchedules()])
 })
 </script>
@@ -193,4 +209,5 @@ onMounted(async () => {
 .shortcut-card:hover { transform: translateY(-2px); }
 .shortcut-card .el-icon { display: block; margin: 0 auto 8px; }
 .shortcut-card div { font-size: 14px; color: #606266; }
+.no-merchant-tip { display: flex; justify-content: center; align-items: center; min-height: 60vh; }
 </style>

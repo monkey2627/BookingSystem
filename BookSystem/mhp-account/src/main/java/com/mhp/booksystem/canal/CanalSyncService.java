@@ -230,6 +230,7 @@ public class CanalSyncService implements ApplicationRunner {
         doc.setReviewCount(merchant.getReviewCount());
         doc.setPriceMin(merchant.getPriceMin() != null ? merchant.getPriceMin().doubleValue() : null);
         doc.setPriceMax(merchant.getPriceMax() != null ? merchant.getPriceMax().doubleValue() : null);
+        doc.setStatus(merchant.getStatus() != null ? merchant.getStatus() : 1);
         return doc;
     }
 

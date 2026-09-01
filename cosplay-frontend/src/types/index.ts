@@ -81,6 +81,8 @@ export interface MerchantVO {
   priceMin: number | null
   priceMax: number | null
   bookingNotice: string
+  status: number               // 1=营业中，0=已关闭
+  scheduleVisibility: number   // 0=全公开，1=仅忙闲，2=完全私密
 }
 
 export interface ScheduleVO {
@@ -93,7 +95,6 @@ export interface ScheduleVO {
   serviceType: number
   rushOpenTime: string | null
   maxQueueSize: number
-  queueSize: number
   currentQueueSize: number
 }
 
@@ -186,6 +187,22 @@ export interface MessageVO {
   createTime: string
   fromNickname?: string
   fromAvatar?: string
+}
+
+// 抢档大厅条目 VO
+export interface RushLobbyItemVO {
+  scheduleId: number
+  merchantId: number
+  merchantNickname: string
+  merchantAvatar: string
+  serviceTypes: number[]
+  date: string
+  timeSlot: string
+  serviceType: number
+  rushOpenTime: string | null
+  maxQueueSize: number
+  currentQueueSize: number
+  open: boolean
 }
 
 // 问卷模板 VO

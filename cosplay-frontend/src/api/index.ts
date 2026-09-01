@@ -2,7 +2,7 @@ import request from '@/utils/request'
 import type {
   UserInfo, MerchantVO, ScheduleVO, BookingVO, CursorPage,
   ReviewVO, RushResultVO, PostVO, RushRecordVO, MerchantStatsVO,
-  MessageVO, ConversationVO, QuestionnaireVO
+  MessageVO, ConversationVO, QuestionnaireVO, RushLobbyItemVO
 } from '@/types'
 
 // ── 用户 ──────────────────────────────────────────────────
@@ -29,10 +29,13 @@ export const merchantApi = {
   }>) => request.put<any, void>('/merchant/info', data),
 
   getMyInfo: () =>
-    request.get<any, MerchantVO>('/merchant/my'),
+    request.get<any, MerchantVO>('/merchant/my', { silentError: true }),
 
   getStats: () =>
     request.get<any, MerchantStatsVO>('/booking/stats/merchant'),
+
+  setShopStatus: (status: 0 | 1) =>
+    request.put<any, void>('/merchant/status', undefined, { params: { status } }),
 }
 
 // ── 档期 ──────────────────────────────────────────────────
@@ -157,6 +160,12 @@ export const questionnaireApi = {
 
   delete: (id: number) =>
     request.delete<any, void>(`/questionnaire/${id}`),
+}
+
+// ── 抢档大厅 ──────────────────────────────────────────────
+export const rushApi = {
+  getLobby: () =>
+    request.get<any, RushLobbyItemVO[]>('/rush/lobby'),
 }
 
 // ── 投诉 ──────────────────────────────────────────────────
