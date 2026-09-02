@@ -352,17 +352,25 @@ async function suiteSchedule() {
     })
 
     await test('创建抢档期（bookType=1，rushOpenTime 已过 → 立即开放，#24）', async () => {
-      const r = await post('/schedule', {
-        date: D3, timeSlot: '14:00-16:00', bookType: 1,
-        serviceType: 1, rushOpenTime: pastDatetime(1), maxQueueSize: 2
-      }, ctx.tokens.merchant_c)
-      assertCreateOrDup(r, 'D3 ')
-      const lr = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
-        ctx.tokens.merchant_c, { month: MONTH(D3) })
-      assertOk(lr)
-      const s = lr.data?.find(s => s.date === D3 && s.bookType === 1)
-      assert(s, `月历中找不到 ${D3} 抢档期`)
-      ctx.rushScheduleId = s.id
+      // 从 offset=45 开始逐日查找队列为空的抢档期
+      // 防止上次运行残留的 Redis 排队记录导致"已在排队中"错误
+      let found = null
+      for (let offset = 45; offset <= 65 && !found; offset++) {
+        const date = futureDate(offset)
+        await post('/schedule', {
+          date, timeSlot: '14:00-16:00', bookType: 1,
+          serviceType: 1, rushOpenTime: pastDatetime(1), maxQueueSize: 2
+        }, ctx.tokens.merchant_c)
+        const lr = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
+          ctx.tokens.merchant_c, { month: date.slice(0, 7) })
+        if (lr.code !== 200) continue
+        const s = lr.data?.find(sc => sc.date === date && sc.bookType === 1 && sc.timeSlot === '14:00-16:00')
+        if (!s) continue
+        const qr = await get(`/schedule/${s.id}/queue`, ctx.tokens.merchant_c)
+        if (qr.code === 200 && (qr.data?.length ?? 0) === 0) found = s
+      }
+      assert(found, '找不到排队列表为空的抢档期（尝试了 offset 45-65）')
+      ctx.rushScheduleId = found.id
     })
 
     await test('批量创建档期（weekdays=[1,3,5] 限定星期，#27）', async () => {
@@ -395,25 +403,21 @@ async function suiteSchedule() {
     })
 
     await test('为预约流程准备专用档期（D4）', async () => {
-      const r = await post('/schedule', {
-        date: D4, timeSlot: '10:00-12:00', bookType: 0, serviceType: 1
-      }, ctx.tokens.merchant_c)
-      assertCreateOrDup(r, 'D4 ')
-      const lr = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
-        ctx.tokens.merchant_c, { month: MONTH(D4) })
-      assertOk(lr)
-      let s = lr.data?.find(s => s.date === D4 && s.timeSlot === '10:00-12:00' && s.status === 0)
-      if (!s) {
-        // 该时间段已被预约，换备用时间段
-        const r2 = await post('/schedule', {
-          date: D4, timeSlot: '13:00-15:00', bookType: 0, serviceType: 1
+      // 逐一尝试候选时间段，找到第一个 status=0 的档期
+      // 每次运行会完成预约，导致该时间段被占用，下次运行自动用下一个候选
+      const candidates = ['10:00-12:00', '13:00-15:00', '14:00-16:00', '15:00-17:00', '17:00-19:00', '20:00-22:00']
+      let s = null
+      for (const slot of candidates) {
+        await post('/schedule', {
+          date: D4, timeSlot: slot, bookType: 0, serviceType: 1
         }, ctx.tokens.merchant_c)
-        assertOk(r2, 'D4 备用档期创建')
-        const lr2 = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
+        const lr = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
           ctx.tokens.merchant_c, { month: MONTH(D4) })
-        s = lr2.data?.find(s => s.date === D4 && s.status === 0)
-        assert(s, `D4(${D4}) 找不到可用空闲档期`)
+        if (lr.code !== 200) continue
+        s = lr.data?.find(sc => sc.date === D4 && sc.timeSlot === slot && sc.status === 0)
+        if (s) break
       }
+      assert(s, `D4(${D4}) 没有可用的空闲时间段（所有候选时间段均已被占用）`)
       ctx.bookingScheduleId = s.id
     })
 
@@ -736,11 +740,17 @@ async function suiteReview() {
   await suite('7. 评价', async () => {
     await test('对未完成预约评价返回错误（#74）', async () => {
       const date = futureDate(180)
-      await post('/schedule', { date, timeSlot: '18:00-20:00', bookType: 0, serviceType: 1 },
-        ctx.tokens.merchant_c)
-      const lr = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
-        ctx.tokens.merchant_c, { month: date.slice(0, 7) })
-      const s = lr.data?.find(sc => sc.date === date && sc.status === 0)
+      const candidates = ['18:00-20:00', '07:00-09:00', '09:00-11:00', '11:00-13:00', '13:00-15:00']
+      let s = null
+      for (const slot of candidates) {
+        await post('/schedule', { date, timeSlot: slot, bookType: 0, serviceType: 1 },
+          ctx.tokens.merchant_c)
+        const lr = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
+          ctx.tokens.merchant_c, { month: date.slice(0, 7) })
+        if (lr.code !== 200) continue
+        s = lr.data?.find(sc => sc.date === date && sc.timeSlot === slot && sc.status === 0)
+        if (s) break
+      }
       if (!s) throw new Error('找不到用于非法评价测试的空闲档期')
       await post('/booking', { scheduleId: s.id, remark: 'review-invalid-test' }, ctx.tokens.user_a)
       const blr = await get('/booking/my', ctx.tokens.user_a, { size: 20 })
@@ -984,11 +994,17 @@ async function suiteQuestionnaire() {
 
     await test('预约时携带问卷答案（#57）', async () => {
       const date = futureDate(200)
-      await post('/schedule', { date, timeSlot: '16:00-18:00', bookType: 0, serviceType: 1 },
-        ctx.tokens.merchant_c)
-      const lr = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
-        ctx.tokens.merchant_c, { month: date.slice(0, 7) })
-      const s = lr.data?.find(sc => sc.date === date && sc.status === 0)
+      const candidates = ['16:00-18:00', '07:00-09:00', '09:00-11:00', '11:00-13:00', '20:00-22:00']
+      let s = null
+      for (const slot of candidates) {
+        await post('/schedule', { date, timeSlot: slot, bookType: 0, serviceType: 1 },
+          ctx.tokens.merchant_c)
+        const lr = await get(`/schedule/merchant/${ctx.merchantIds.merchant_c}`,
+          ctx.tokens.merchant_c, { month: date.slice(0, 7) })
+        if (lr.code !== 200) continue
+        s = lr.data?.find(sc => sc.date === date && sc.timeSlot === slot && sc.status === 0)
+        if (s) break
+      }
       if (!s) throw new Error('找不到问卷测试用档期')
       assertOk(
         await post('/booking', {
@@ -1106,6 +1122,62 @@ async function suiteChatEntry() {
 }
 
 // ════════════════════════════════════════════════════════════════
+// Teardown：清理本次测试产生的数据，确保下次运行时环境干净
+// ════════════════════════════════════════════════════════════════
+async function teardown() {
+  process.stdout.write('\n\x1b[33m═══ 清理测试数据 ═══\x1b[0m\n')
+  let cleaned = 0
+
+  // 1. 取消 user_a / user_b 的待确认预约（status=0），使档期释放回 status=0
+  for (const userKey of ['user_a', 'user_b']) {
+    const token = ctx.tokens[userKey]
+    if (!token) continue
+    const r = await get('/booking/my', token, { size: 100 })
+    if (r.code !== 200) continue
+    for (const b of (r.data?.list ?? [])) {
+      if (b.status === 0) {
+        const cr = await put(`/booking/${b.id}/cancel`, undefined, token)
+        if (cr.code === 200) cleaned++
+      }
+    }
+  }
+
+  // 2. 删除 merchant_c / merchant_d 的所有空闲档期（status=0）
+  // 覆盖未来 13 个月，包含抢档期（抢档期同样 status=0，删后下次运行拿新 scheduleId 即新 Redis 键）
+  const months = []
+  for (let i = 0; i <= 12; i++) {
+    const d = new Date()
+    d.setDate(1) // 先归到 1 号，防止月底 setMonth 溢出（如 1月31日 +1月 → 3月）
+    d.setMonth(d.getMonth() + i)
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+  }
+  for (const merchantKey of ['merchant_c', 'merchant_d']) {
+    const token = ctx.tokens[merchantKey]
+    const merchantId = ctx.merchantIds[merchantKey]
+    if (!token || !merchantId) continue
+    for (const month of months) {
+      const r = await get(`/schedule/merchant/${merchantId}`, token, { month })
+      if (r.code !== 200) continue
+      for (const s of (r.data ?? [])) {
+        if (s.status === 0) {
+          const dr = await del(`/schedule/${s.id}`, token)
+          if (dr.code === 200) cleaned++
+        }
+      }
+    }
+  }
+
+  // 3. 删除本次运行发布的动态
+  if (ctx.postId) {
+    const dr = await del(`/post/${ctx.postId}`, ctx.tokens.merchant_c)
+    if (dr.code === 200) { cleaned++; ctx.postId = null }
+  }
+
+  process.stdout.write(`  已清理 ${cleaned} 条记录\n`)
+  process.stdout.write('  注：已完成/已定档的预约不可取消，抢档 Redis 队列随 scheduleId 删除自动失效\n')
+}
+
+// ════════════════════════════════════════════════════════════════
 // Main
 // ════════════════════════════════════════════════════════════════
 async function main() {
@@ -1137,6 +1209,12 @@ async function main() {
   await suitePermission()
   await suiteQuestionnaire()
   await suiteChatEntry()
+
+  try {
+    await teardown()
+  } catch (e) {
+    process.stderr.write(`\x1b[33m[清理警告] ${e.message}\x1b[0m\n`)
+  }
 
   const total = passed + failed
   process.stdout.write('\n\x1b[33m═══ 测试结果 ═══\x1b[0m\n')
