@@ -581,9 +581,10 @@ final float loadFactor;              // 负载因子，默认 0.75
 static final int DEFAULT_INITIAL_CAPACITY = 1 << 4;  // 16
 static final int MAXIMUM_CAPACITY = 1 << 30;
 static final float DEFAULT_LOAD_FACTOR = 0.75f;
-static final int TREEIFY_THRESHOLD = 8;    // 链表转红黑树的阈值
-static final int UNTREEIFY_THRESHOLD = 6; // 红黑树退化为链表的阈值
-static final int MIN_TREEIFY_CAPACITY = 64; // 转树还需要总容量 >= 64
+static final int TREEIFY_THRESHOLD = 8;     // 单个桶内链表结点数 ≥8，满足转树候选
+static final int UNTREEIFY_THRESHOLD = 6;   // 树结点≤6，退化为链表
+static final int MIN_TREEIFY_CAPACITY = 64; // 允许树化的最低 table 数组长度
+
 
 static class Node<K,V> implements Map.Entry<K,V> {
     final int hash;
