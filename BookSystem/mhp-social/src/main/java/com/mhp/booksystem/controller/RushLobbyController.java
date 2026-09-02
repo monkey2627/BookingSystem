@@ -1,6 +1,6 @@
 package com.mhp.booksystem.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mhp.booksystem.common.Result;
@@ -43,7 +43,7 @@ public class RushLobbyController {
 
     @GetMapping("/lobby")
     public Result<List<RushLobbyItemVO>> getLobby() {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
 
         // 1. 当前用户关注的商家
         List<Long> merchantIds = followMapper.selectList(

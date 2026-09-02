@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -47,7 +47,7 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
     @Override
     @Transactional
     public void create(ReviewCreateDTO dto) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
 
         BookingDTO booking = rpcBookingService.getBookingById(dto.getOrderId());
         if (booking == null || !booking.getUserId().equals(userId)) {
@@ -106,7 +106,7 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
 
     @Override
     public void reply(Long reviewId, ReviewReplyDTO dto) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         Review review = getById(reviewId);
         if (review == null) {
             throw new BusinessException(ResultCode.REVIEW_NOT_FOUND);

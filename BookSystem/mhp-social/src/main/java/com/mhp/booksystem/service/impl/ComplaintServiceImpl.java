@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -44,7 +44,7 @@ public class ComplaintServiceImpl extends ServiceImpl<ComplaintMapper, Complaint
 
     @Override
     public void create(ComplaintCreateDTO dto) {
-        Long complainantId = StpUtil.getLoginIdAsLong();
+        Long complainantId = SecurityUtil.getCurrentUserId();
 
         BookingDTO booking = rpcBookingService.getBookingById(dto.getOrderId());
         if (booking == null) {
@@ -92,7 +92,7 @@ public class ComplaintServiceImpl extends ServiceImpl<ComplaintMapper, Complaint
 
     @Override
     public List<ComplaintVO> listReceived() {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         List<Complaint> complaints = lambdaQuery()
                 .eq(Complaint::getRespondentId, userId)
                 .orderByDesc(Complaint::getCreateTime)

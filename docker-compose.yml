@@ -8,7 +8,27 @@ version: '3.8'
 services:
 
   # ── MySQL 8.0 ────────────────────────────────────────────────
-  # 开启 ROW 格式 binlog，Canal 依赖此配置监听数据变更
+  # Canal 伪装成 MySQL 从库（Slave），通过主从复制协议拉取 binlog，MySQL 侧需要以下前提配置：
+  #
+  #   --log-bin=mysql-bin
+  #     开启 binlog，文件名前缀为 mysql-bin（如 mysql-bin.000001）。
+  #     MySQL 8.0 官方镜像默认开启，但 Docker 镜像未必，显式声明更保险。
+  #
+  #   --binlog-format=ROW
+  #     必须是 ROW 格式。ROW 格式记录每行数据的完整前镜像 + 后镜像，
+  #     Canal 可以精确知道哪条记录从什么值变成了什么值。
+  #     STATEMENT 格式只记 SQL 语句（如 "UPDATE merchant SET ..."），
+  #     无法从中提取具体行数据，Canal 无法解析。
+  #     MySQL 8.0 默认已是 ROW 格式，同样显式声明，意图清晰。
+  #
+  #   --server-id=1
+  #     MySQL 复制协议要求主库有全局唯一的非零 server-id。
+  #     server-id=0 是 MySQL 的保留值，含义是"不参与复制拓扑"：
+  #     Canal 注册从库时发送 COM_REGISTER_SLAVE 握手包，MySQL 检测到 server-id=0 会直接拒绝。
+  #     MySQL 8.0 默认 server-id=0，因此这一项必须显式设置为非零值。
+  #
+  #   --binlog-do-db=mhp
+  #     只为 mhp 库记录 binlog，过滤掉其他库（如 xxl_job）的变更，减少磁盘占用。
   mysql:
     image: mysql:8.0
     container_name: mhp-mysql

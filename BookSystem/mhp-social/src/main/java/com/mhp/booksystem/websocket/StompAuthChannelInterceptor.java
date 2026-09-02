@@ -1,6 +1,6 @@
 package com.mhp.booksystem.websocket;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.JwtUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -12,11 +12,11 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.stereotype.Component;
 
 /**
- * STOMP 连接认证拦截器 — 在 WebSocket 握手阶段验证 Sa-Token。
+ * STOMP 连接认证拦截器 — 在 WebSocket 握手阶段验证 JWT。
  *
- * 为什么不用 HTTP 拦截器（SaTokenConfig）？
+ * 为什么不用 HTTP Filter（SecurityConfig）？
  *   WebSocket 连接是通过 HTTP Upgrade 建立的，连接一旦升级为 WS 协议，
- *   后续帧不再走 Spring MVC 的 HandlerInterceptor。
+ *   后续帧不再走 Servlet Filter 链。
  *   STOMP 的 CONNECT 帧是 WS 建立后的第一帧，需要在消息通道层拦截。
  *
  * 执行时机：
@@ -48,14 +48,13 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
             throw new MessagingException("WebSocket 连接未携带 token");
         }
 
-        // Sa-Token 根据 token 字符串反查 loginId（不依赖 ThreadLocal，线程安全）
-        Object loginId = StpUtil.getLoginIdByToken(token);
-        if (loginId == null) {
+        // JwtUtil.parse() 解析 JWT，token 非法或过期时抛 JwtException，被 catch 后断开连接
+        final String userId;
+        try {
+            userId = String.valueOf(JwtUtil.parse(token));
+        } catch (Exception e) {
             throw new MessagingException("WebSocket token 无效或已过期");
         }
-
-        // 将 userId 注入为 Principal，后续推消息时通过 userId 找到对应的 WS 会话
-        final String userId = loginId.toString();
         accessor.setUser(() -> userId);
         log.debug("[WS] 用户 {} 建立 WebSocket 连接", userId);
         return message;

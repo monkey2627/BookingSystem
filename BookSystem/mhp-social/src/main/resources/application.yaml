@@ -38,13 +38,6 @@ mybatis-plus:
       logic-not-delete-value: 0
   mapper-locations: classpath:mapper/*.xml
 
-sa-token:
-  token-name: token
-  timeout: 2592000
-  is-concurrent: true
-  is-read-cookie: false
-  token-style: uuid
-
 qiniu:
   access-key: your-access-key
   secret-key: your-secret-key

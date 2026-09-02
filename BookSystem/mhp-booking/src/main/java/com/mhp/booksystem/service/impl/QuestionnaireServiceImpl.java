@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mhp.booksystem.common.ResultCode;
@@ -32,7 +32,7 @@ public class QuestionnaireServiceImpl extends ServiceImpl<QuestionnaireTemplateM
 
     @Override
     public void create(QuestionnaireCreateDTO dto) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             throw new BusinessException(ResultCode.USER_NOT_MERCHANT);
@@ -63,7 +63,7 @@ public class QuestionnaireServiceImpl extends ServiceImpl<QuestionnaireTemplateM
 
     @Override
     public List<QuestionnaireVO> getMyTemplates() {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) return Collections.emptyList();
         return listByMerchant(merchant.getId());
@@ -71,7 +71,7 @@ public class QuestionnaireServiceImpl extends ServiceImpl<QuestionnaireTemplateM
 
     @Override
     public void deleteTemplate(Long id) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         QuestionnaireTemplate t = getById(id);
         if (t == null) throw new BusinessException(ResultCode.QUESTIONNAIRE_NOT_FOUND);
         MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);

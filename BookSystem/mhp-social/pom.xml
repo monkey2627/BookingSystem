@@ -47,21 +47,24 @@
             <artifactId>mysql-connector-j</artifactId>
         </dependency>
 
-        <!-- Redis（Sa-Token 共享 Session + MQ 幂等去重） -->
+        <!-- Redis（MQ 幂等去重） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- Sa-Token -->
+        <!-- Spring Security（JWT 鉴权，替换原 Sa-Token） -->
         <dependency>
-            <groupId>cn.dev33</groupId>
-            <artifactId>sa-token-spring-boot3-starter</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
-        <!-- Sa-Token Redis 存储（共享 token） -->
         <dependency>
-            <groupId>cn.dev33</groupId>
-            <artifactId>sa-token-redis-jackson</artifactId>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
         </dependency>
 
         <!-- RabbitMQ（消费预约事件，推 WebSocket） -->

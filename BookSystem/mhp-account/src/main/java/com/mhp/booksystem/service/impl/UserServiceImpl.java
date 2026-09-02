@@ -1,7 +1,7 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
-import cn.hutool.crypto.SecureUtil;
+import com.mhp.booksystem.security.JwtUtil;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mhp.booksystem.common.ResultCode;
@@ -22,6 +22,10 @@ import org.springframework.stereotype.Service;
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
 
     private final MerchantMapper merchantMapper;
+
+    // BCryptPasswordEncoder 是线程安全的无状态对象，直接作为字段持有即可
+    // 不用 @Autowired 注入，避免为此单独声明一个 @Bean
+    private static final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     // ── @Override 说明 ────────────────────────────────────────────────────────
     // @Override 的真正含义是"请编译器确认这个方法存在于父类或接口中，否则报错"。
@@ -59,8 +63,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         User user = new User();
         user.setPhone(dto.getPhone());
-        // MD5 不可逆加密，只存摘要，忘记密码只能重置不能找回
-        user.setPassword(SecureUtil.md5(dto.getPassword()));
+        // BCrypt 内置随机盐，每次 encode 结果不同，相同明文不产生相同哈希，彩虹表无效
+        user.setPassword(passwordEncoder.encode(dto.getPassword()));
         user.setNickname(dto.getNickname());
         save(user);
 
@@ -77,7 +81,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new BusinessException(ResultCode.USER_NOT_FOUND);
         }
 
-        if (!user.getPassword().equals(SecureUtil.md5(dto.getPassword()))) {
+        // matches(明文, 哈希) 内部自动提取盐值后比较，不能用 equals
+        if (!passwordEncoder.matches(dto.getPassword(), user.getPassword())) {
             throw new BusinessException("密码错误");
         }
 
@@ -87,39 +92,20 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     /**
      * 登录/注册成功后统一构建返回值。
      *
-     * StpUtil.login(id) 会在 Redis 里写入 token→userId 映射（Sa-Token 托管），
-     * getTokenValue() 拿到刚生成的 token 字符串返回给前端。
-     * 前端把 token 存在 localStorage，后续请求通过 Axios 拦截器放入 Header。
-     *
-     * hasMerchantProfile 告诉前端当前用户是否有商家资料，
-     * 前端据此决定是否展示"档期管理"等商家专属菜单，避免额外一次接口查询。
+     * JwtUtil.generate(userId) 生成自包含的 JWT：Header.Payload.Signature 三段式字符串。
+     * Payload 里包含 userId（sub 字段）和过期时间（exp 字段），不需要查 Redis 就能验证。
+     * 前端把 token 存在 localStorage，后续请求通过 Axios 拦截器放入 Header "token"。
+     * 后端 JwtAuthenticationFilter 读取该 Header，解析出 userId 写入 SecurityContext，
+     * Service 层通过 SecurityUtil.getCurrentUserId() 取出，无 Redis IO，O(1)。
      */
     private UserLoginVO buildLoginVO(User user) {
-        // ── StpUtil.login(id) 做了两件事 ─────────────────────────────────────
-        // 1. 在 Redis 里写入一条记录：token（自动生成的随机字符串）→ userId
-        //    后续每个请求带着这个 token 过来，Sa-Token 去 Redis 查对应的 userId，
-        //    查到了就说明已登录，查不到（token 过期或不存在）就是未登录。
-        //    这就是 token 鉴权的本质：Redis 是"有效 token 的名单"。
-        //
-        // 2. 把刚生成的 token 绑定到当前请求的线程（ThreadLocal）。
-        //    ThreadLocal 是 Java 的线程隔离机制：每个线程有自己独立的变量副本，
-        //    线程 A 写入的值线程 B 看不到。Tomcat 每个请求用一个线程处理，
-        //    login() 把 token 写入当前线程的 ThreadLocal，
-        //    后续同一个请求里调用 getTokenValue() 就能直接从 ThreadLocal 取出，
-        //    不需要再传参，也不会拿到别的请求的 token。
-        StpUtil.login(user.getId());
-
         UserLoginVO.UserInfoVO userInfoVO = new UserLoginVO.UserInfoVO();
         userInfoVO.setId(user.getId());
         userInfoVO.setNickname(user.getNickname());
         userInfoVO.setAvatar(user.getAvatar());
-        // 不返回"是否商家"字段：前端采用闲鱼模式，所有用户都能访问买/卖功能，
-        // 进入"我卖出的"页面若没有商家资料则展示空列表，无需在登录时判断身份。
-        // 删除此字段同时省去一次登录时的额外 DB 查询。
 
         UserLoginVO vo = new UserLoginVO();
-        // getTokenValue() 从当前线程的 ThreadLocal 取出 login() 绑定的 token 字符串
-        vo.setToken(StpUtil.getTokenValue());
+        vo.setToken(JwtUtil.generate(user.getId()));
         vo.setUserInfo(userInfoVO);
         return vo;
     }

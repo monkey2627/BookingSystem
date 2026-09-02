@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mhp.booksystem.common.ResultCode;
@@ -62,7 +62,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
 
     @Override
     public void create(ScheduleCreateDTO dto) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);
@@ -132,7 +132,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
 
     @Override
     public RushResultVO rush(Long scheduleId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
 
         Schedule schedule = getById(scheduleId);
         if (schedule == null) {
@@ -187,7 +187,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
             throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "开始日期不能晚于结束日期");
         }
 
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);
@@ -233,7 +233,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
 
     @Override
     public void deleteSchedule(Long scheduleId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         Schedule schedule = getById(scheduleId);
         if (schedule == null) {
             throw new BusinessException(ResultCode.SCHEDULE_NOT_FOUND);
@@ -282,7 +282,7 @@ public class ScheduleServiceImpl extends ServiceImpl<ScheduleMapper, Schedule> i
 
     @Override
     public void updateRushStatus(Long rushId, Integer status) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         RushRecord record = rushRecordMapper.selectById(rushId);
         if (record == null) {
             throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "排队记录不存在");

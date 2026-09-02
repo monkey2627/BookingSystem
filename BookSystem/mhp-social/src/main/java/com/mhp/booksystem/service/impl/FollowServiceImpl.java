@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mhp.booksystem.common.ResultCode;
@@ -32,7 +32,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);
         }
 
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         boolean exists = lambdaQuery()
                 .eq(Follow::getUserId, userId)
                 .eq(Follow::getMerchantId, merchantId)
@@ -49,7 +49,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public void unfollow(Long merchantId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         Follow follow = lambdaQuery()
                 .eq(Follow::getUserId, userId)
                 .eq(Follow::getMerchantId, merchantId)
@@ -62,7 +62,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public boolean isFollowing(Long merchantId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         return lambdaQuery()
                 .eq(Follow::getUserId, userId)
                 .eq(Follow::getMerchantId, merchantId)
@@ -71,7 +71,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public List<MerchantVO> myFollows() {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
 
         List<Long> merchantIds = lambdaQuery()
                 .eq(Follow::getUserId, userId)

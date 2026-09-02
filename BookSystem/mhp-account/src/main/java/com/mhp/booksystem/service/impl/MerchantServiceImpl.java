@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -85,9 +85,8 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
 
     @Override
     public void updateInfo(MerchantUpdateDTO dto) {
-        // Sa-Token 从当前请求线程绑定的 token 里解析用户 id，不从请求参数取，
-        // 防止用户伪造别人的 userId 修改他人资料
-        Long userId = StpUtil.getLoginIdAsLong();
+        // 从 SecurityContext 取当前用户 id，不从请求参数取，防止伪造他人 userId
+        Long userId = SecurityUtil.getCurrentUserId();
 
         // lambdaQuery() 来自父类 ServiceImpl，等价于：SELECT * FROM merchant WHERE user_id = ? LIMIT 1
         // 用 Lambda 引用而非字符串字段名（如 "user_id"），IDE 有类型检查，重构时字段名跟着改
@@ -370,7 +369,7 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
 
     @Override
     public MerchantVO getMyInfo() {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         // 通过 userId 找到自己的商家记录，取到 merchantId 再走带缓存的 getDetail
         Merchant merchant = lambdaQuery().eq(Merchant::getUserId, userId).one();
         if (merchant == null) {
@@ -436,7 +435,7 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant> i
 
     @Override
     public void setShopStatus(int status) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         Merchant merchant = lambdaQuery().eq(Merchant::getUserId, userId).one();
         if (merchant == null) throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);
         merchant.setStatus(status);

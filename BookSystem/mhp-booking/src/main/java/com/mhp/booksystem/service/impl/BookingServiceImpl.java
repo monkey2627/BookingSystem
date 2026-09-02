@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import cn.hutool.core.util.IdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -64,7 +64,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     @Override
     @Transactional
     public void create(BookingCreateDTO dto) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
 
         Schedule schedule = scheduleMapper.selectById(dto.getScheduleId());
         if (schedule == null) {
@@ -132,7 +132,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     /** 客人查"我的预约"，游标分页，支持按服务类型筛选 */
     @Override
     public CursorPageVO<BookingVO> myBookings(Long lastId, int size, Integer serviceType) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         List<Booking> bookings = lambdaQuery()
                 .eq(Booking::getUserId, userId)
                 .eq(serviceType != null, Booking::getServiceType, serviceType)
@@ -146,7 +146,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     /** 商家查"收到的预约"，通过 Feign 把 userId 换成 merchantId 再查 */
     @Override
     public CursorPageVO<BookingVO> receivedBookings(Long lastId, int size, Integer serviceType, Integer status) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             return CursorPageVO.of(List.of(), false, null);
@@ -165,7 +165,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     /** 商家确认预约：待确认(0) → 已定档(2)，并通过 MQ 通知客人 */
     @Override
     public void confirm(Long bookingId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         Booking booking = getAndCheckMerchantBooking(bookingId, userId);
         if (booking.getStatus() != 0) {
             throw new BusinessException(ResultCode.BOOKING_STATUS_ERROR);
@@ -178,7 +178,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     /** 商家标记完成：已定档(2) → 已完成(3)，客人此后可以评价 */
     @Override
     public void complete(Long bookingId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         Booking booking = getAndCheckMerchantBooking(bookingId, userId);
         if (booking.getStatus() != 2) {
             throw new BusinessException(ResultCode.BOOKING_STATUS_ERROR);
@@ -196,7 +196,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     @Override
     @Transactional
     public void cancel(Long bookingId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         Booking booking = getById(bookingId);
         if (booking == null) {
             throw new BusinessException(ResultCode.BOOKING_NOT_FOUND);
@@ -238,7 +238,7 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     /** 商家数据看板：本月接单数、完成数、取消数、待确认数，以及评分 */
     @Override
     public MerchantStatsVO getMerchantStats() {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         MerchantDTO merchant = rpcMerchantService.getMerchantByUserId(userId);
         if (merchant == null) {
             throw new BusinessException(ResultCode.MERCHANT_NOT_FOUND);

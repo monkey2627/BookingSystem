@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mhp.booksystem.common.ResultCode;
 import com.mhp.booksystem.common.exception.BusinessException;
@@ -31,7 +31,7 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
 
     @Override
     public void send(MessageSendDTO dto) {
-        Long fromUserId = StpUtil.getLoginIdAsLong();
+        Long fromUserId = SecurityUtil.getCurrentUserId();
         if (fromUserId.equals(dto.getToUserId())) {
             throw new BusinessException(ResultCode.PARAM_ERROR.getCode(), "不能给自己发消息");
         }
@@ -57,7 +57,7 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
 
     @Override
     public CursorPageVO<MessageVO> history(Long targetUserId, Long lastId, int size) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
 
         List<Message> messages = lambdaQuery()
                 .and(w -> w
@@ -91,7 +91,7 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
 
     @Override
     public List<ConversationVO> getConversations() {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         List<ConversationVO> conversations = ((MessageMapper) baseMapper).selectConversations(userId);
         if (conversations == null || conversations.isEmpty()) return Collections.emptyList();
 

@@ -1,6 +1,6 @@
 package com.mhp.booksystem.service.impl;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.mhp.booksystem.security.SecurityUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -39,7 +39,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
 
     @Override
     public void create(PostCreateDTO dto) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         MerchantDTO merchant = accountFeignClient.getMerchantByUserId(userId).getData();
         if (merchant == null) {
             throw new BusinessException(ResultCode.USER_NOT_MERCHANT);
@@ -90,7 +90,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
 
     @Override
     public void delete(Long postId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         Post post = getById(postId);
         if (post == null) {
             throw new BusinessException(ResultCode.POST_NOT_FOUND);
@@ -104,7 +104,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements Po
 
     @Override
     public void toggleLike(Long postId) {
-        Long userId = StpUtil.getLoginIdAsLong();
+        Long userId = SecurityUtil.getCurrentUserId();
         String key = "post:likes:" + postId + ":" + userId;
         Boolean firstLike = stringRedisTemplate.opsForValue()
                 .setIfAbsent(key, "1", 24 * 365, TimeUnit.HOURS);
