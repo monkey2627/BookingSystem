@@ -863,3 +863,810 @@ Java 序列化：消息不可读、强依赖类路径和 serialVersionUID、有�
 **Q：Consumer 抛出异常会怎样？应该如何处理？**
 
 Spring AMQP 默认行为：异常 → 消息重新入队 → 无限重试 → 可能造成消息风暴。正确策略：在 Consumer 内部 try-catch，业务失败时将失败状态持久化到 DB（而非依赖 MQ 重投），消息正常 ACK。只有临时性错误（如网络抖动）才考虑 requeue=true 重投，并设置最大重试次数上限。
+
+
+AMQP 模型（Advanced Message Queuing Protocol）
+
+AMQP 是高级消息队列协议，RabbitMQ 就是基于 AMQP‑0‑9‑1 实现的。
+
+核心思想：生产者不直接发消息给队列，发给交换机 Exchange；交换机按照路由规则，把消息投递到队列 Queue。
+
+AMQP五大核心组件
+
+1. Producer 生产者
+发消息的程序，消息不会直接丢给队列，发送给 Exchange（交换机）。
+2. Exchange 交换机
+接收生产者消息，决定消息该往哪个队列走。
+本身不存消息，只做转发。
+3. Binding 绑定
+ 交换机 ↔ 队列  之间的绑定关系。
+绑定的时候带上 routing‑key（路由键）。
+4. Queue 队列
+真正存储消息的地方。消费者从队列拿消息。
+可以多个消费者监听同一个队列。
+5. Consumer 消费者
+从 Queue 获取消息，执行业务。
+
+ 
+
+完整流程（AMQP标准流程）
+
+1. 生产者发送消息 → Exchange交换机，消息带上  routing‑key 
+2. Exchange 根据自己的类型 + 消息的  routing‑key ，查找绑定关系Binding
+3. 把消息路由到匹配的 Queue（一个或多个）
+4. 消息保存在队列 Queue
+5. Consumer 从 Queue 消费消息
+
+❗重点区别：Kafka没有交换机概念，生产者直接发给topic。RabbitMQ(AMQP)必须经过交换机。
+
+Exchange 四种常用类型（面试高频）
+
+1. Direct 直连交换机
+
+- 规则：routing‑key 必须完全相等才匹配
+- 使用场景：点对点，定向发给指定队列。
+- 例子：绑定routing‑key= error ；只有消息routing‑key= error 才进这个队列。
+
+2. Fanout 广播交换机
+
+- 忽略 routing‑key
+- 收到消息，把消息复制给所有绑定到此交换机的队列
+- 场景：广播，所有订阅者全部收到。
+
+3. Topic 主题交换机
+
+- routing‑key支持通配符模糊匹配
+-  *  匹配一个单词
+-  #  匹配0个或者多个单词
+- 示例： order.* 、 log.# 
+- 场景：日志收集，多条件订阅。
+
+4. Headers 头交换机
+
+不靠routing‑key，靠消息 headers 属性匹配，很少用。
+
+几个名词分清
+
+- Routing‑key：生产者发消息时贴在消息上的标签
+- Binding‑key：交换机绑定队列的时候写的匹配规则
+
+Direct模式下两者完全一样；Topic模式下binding‑key可以带通配符。
+
+AMQP协议还规定了什么？
+
+不仅仅是模型，还规定整套：
+
+1. 消息格式（header、payload）
+2. 可靠性机制：confirm确认、ack/nack拒绝消息、持久化
+3. 事务、死信队列、TTL
+4. 网络二进制帧格式
+
+RabbitMQ严格遵守这套AMQP模型。
+
+面试口述简短版
+
+AMQP是RabbitMQ使用的消息协议，模型分为生产者、交换机、绑定、队列、消费者。生产者消息发给交换机，交换机根据类型和路由键，通过绑定关系路由到队列，消费者从队列消费。交换机分direct、fanout、topic、headers四种。
+
+容易踩坑
+
+1. 生产者不能直接发送消息到队列，AMQP规范必须走交换机；只是RabbitMQ有默认交换机可以简写，底层依然走交换机。
+2. 队列才存消息，交换机不存消息。
+
+如果你需要，我可以对比：AMQP vs Kafka协议的区别。
+
+
+RabbitMQ ack / nack，没有死信队列会发生什么
+
+核心结论：
+当你调用  nack  /  reject ，如果不配置死信队列(DLX)，消息不会直接丢弃，默认会重新回到原队列头部，重新被消费，不是直接扔了！
+
+❗很多人记错：nack不等于丢弃。丢弃是额外参数控制的。
+
+两个API
+
+1.  basicNack(deliveryTag, multiple, requeue) 
+2.  basicReject(deliveryTag, requeue) 
+ 
+-  requeue = true ：消息重新放回原队列（默认经常是true）
+                                                                                消息回到队列，会再次投递给消费者，很容易造成无限循环重复消费。
+-  requeue = false ：丢弃这条消息；如果此时配置了死信队列，消息就转发进死信；没有死信队列，直接彻底删掉消息。
+
+场景1：nack，requeue=true，无死信队列
+
+java
+
+channel.basicNack(tag, false, true);
+ 
+ 
+消息 → 退回原队列头部 → 马上又推给消费者 → 死循环，不断重复消费同一条坏消息
+
+这是线上非常经典bug：消息一直消费失败，疯狂重试，CPU打满。
+
+场景2：nack，requeue=false，无死信队列
+
+java
+
+channel.basicNack(tag, false, false);
+ 
+ 
+没有死信队列 → 直接永久删除消息，彻底丢失。
+
+场景3：nack，requeue=false，配置了死信队列DLX
+
+消息不会丢，转发到死信队列，等待人工排查。
+
+什么时候消息会进死信队列？4种条件
+
+1. nack / reject，并且  requeue=false 
+2. 消息TTL过期
+3. 队列达到最大长度，消息被溢出
+4. 消费者断开，消息没有ack，也不会进死信；只有上面三种才会触发DLX路由
+
+⚠️注意： requeue=true  的消息，永远不会进入死信队列，只是重新放回原队列。
+
+面试一句话背诵
+
+nack的行为由requeue参数决定：requeue=true消息重回原队列，会重复消费，不会进死信；requeue=false消息才会判断是否有死信队列，有就转发DLX，没有就直接丢弃消息。
+
+开发最佳实践
+
+1. 业务处理异常：
+- 可以短暂重试几次；重试失败后，使用  nack(requeue=false) ，配合死信队列保存坏消息，方便排查。
+  2. 千万不要一直  requeue=true ，会出现死循环。
+
+补充区分 ack
+
+basicAck() ：正常确认，消息直接删除，和死信队列无关。
+
+ 
+
+举个通俗比喻：
+
+- requeue=true：快递坏了，退回快递站，再派送给你，一遍一遍送
+- requeue=false：拒收快递；有垃圾收纳盒（死信）就丢盒子，没有直接扔垃圾桶。
+
+要不要我简单讲下死信队列完整配置逻辑？
+
+basicAck(deliveryTag, multiple)
+
+java
+
+channel.basicAck(deliveryTag, multiple);
+ 
+ 
+第二个参数 multiple：布尔值 true / false，批量确认
+
+deliveryTag：每条消息的唯一编号，RabbitMQ给的，每一条消息都有。
+
+multiple = false（默认常用）
+
+只确认当前这一条消息。
+只把传入的这个  deliveryTag  对应的消息标记为消费成功，删掉。
+
+java
+
+channel.basicAck(tag, false);
+ 
+ 
+我确认这条，别的消息我不管。
+
+multiple = true 批量确认
+
+确认deliveryTag以及所有比它小的deliveryTag全部确认成功。
+
+举例：
+现在你收到消息tag：5、6、7、8
+你调用： basicAck(8, true) 
+含义：tag=1~8 全部确认消费完成，全部删掉。
+
+ 
+
+它解决什么场景？
+
+RabbitMQ可以开启 预取（prefetch），一次性推多条消息给消费者，消费者缓存一堆消息在本地，不是处理一条ack一条。
+
+比如 prefetch=10，MQ一次性发给你10条消息。
+你顺序处理完第10条，直接  ack(10,true) ，一次性确认全部10条，不用循环调用10次ack，减少网络IO。
+
+⚠️巨大坑（面试高频）
+
+1. 消息是按顺序投递才适合用 multiple=true；如果消息处理是多线程乱序处理，千万不能开multiple=true！
+
+举个坑例子：
+你收到 tag=5、tag=6。
+
+- 5处理慢，6先处理完。
+- 你执行  basicAck(6, true) 
+👉 multiple=true：tag≤6 的全部确认，连还没处理完的tag=5也被确认删掉，直接消息丢失！
+
+多线程异步消费，一定写 multiple=false，一条一条ack，不要批量。
+
+和 nack 的 multiple 做对比
+
+java
+
+// nack第一个multiple参数
+basicNack(deliveryTag, multiple, requeue)
+ 
+ 
+nack的 multiple=true ：把 ≤ 当前tag所有未ack消息一起nack拒绝。
+
+面试口述版
+
+basicAck第二个参数multiple用来批量确认。false只确认单条；true代表确认deliveryTag以及之前所有收到的消息。多线程乱序消费必须用false，否则会丢消息；顺序消费可以用true减少网络往返。
+
+小结记忆
+
+- multiple=false：只干这1条
+- multiple=true：这条 + 前面所有，一锅端
+
+补充
+
+basicReject 没有multiple参数，只能拒绝单条消息，不能批量拒绝，这就是为什么有basicNack。
+
+要不要我顺带梳理一遍：basicAck / basicNack / basicReject三者完整对比表格？
+
+RabbitMQ 生产者 ConfirmCallback 回调（发布确认）
+
+概念：生产者发送消息出去之后，不知道 MQ 到底有没有收到这条消息。
+ ConfirmCallback  就是一个回调函数：MQ收到消息之后，会给生产者回一个应答，执行这个回调。
+
+属于 生产者可靠性，防止消息在网络途中丢了。
+
+两个回调
+
+1. ConfirmCallback：确认 MQ broker 是否收到这条消息
+- ack=true：MQ 已经成功收下这条消息
+- ack=false：MQ 拒绝接收这条消息（比如exchange不存在、内部异常）
+  2. ReturnCallback：消息到达MQ，但是找不到队列，路由失败才触发（消息被退回生产者）
+
+区分记忆
+
+- Confirm：消息有没有到达Broker服务器
+- Return：到达Broker，但是路由不到任何队列
+
+底层AMQP原理
+
+开启发布确认模式： publisher‑confirm‑type 
+生产者每发一条消息，MQ会返回一个confirm。
+
+- 同步：发完消息阻塞等待confirm返回（性能差）
+- 异步：设置ConfirmCallback回调（我们业务常用），MQ回应答的时候自动执行回调方法，不阻塞业务线程。
+
+SpringBoot 伪代码
+
+java
+
+// 设置确认回调
+rabbitTemplate.setConfirmCallback((correlationData, ack, cause) -> {
+if (ack) {
+// MQ成功收到消息
+System.out.println("消息成功投递到MQ");
+} else {
+// MQ拒收，消息没到broker
+System.out.println("投递失败，原因："+cause);
+// 这里要做补偿：重发、记录数据库，后续重试
+}
+});
+ 
+ 
+-  correlationData ：消息唯一ID，用来标记是哪一条消息的回执。发消息的时候带上这个id，回调回来可以拿到。
+-  ack ：boolean，true MQ收到；false MQ没有收下。
+-  cause ：失败原因字符串。
+
+重点坑（面试高频）
+
+1. ✅ ack=true  只代表消息成功到达Broker（交换机）！
+不代表消息已经成功投递到队列，更不代表消费者消费成功！
+
+如果交换机收到消息，但是路由不到队列。此时 ConfirmCallback 的 ack依旧是 true！
+因为消息已经到达broker，只是路由失败。这种情况触发 ReturnCallback。
+
+举例子：
+生产者发消息给exchangeA，但是没有任何队列绑定。
+
+- ConfirmCallback → ack=true（已经送到交换机）
+- ReturnCallback 被触发，告诉生产者：消息路由失败。
+
+2. Confirm回调不能保证消息不丢队列这一步，需要同时开启 ReturnCallback。
+3. 必须在配置文件开启发布确认，否则回调不会执行
+
+yaml
+
+spring:
+rabbitmq:
+publisher-confirm-type: correlated   # 开启confirm回调
+publisher-returns: true              # 开启return回调
+ 
+ 
+整个消息链路可靠性完整回顾
+
+1. 生产者 → MQ交换机：靠 ConfirmCallback + ReturnCallback 保证
+2. 交换机 → 队列：队列持久化、消息持久化
+3. 队列 → 消费者：靠消费者端 basicAck
+
+面试背诵简短版
+
+ConfirmCallback是生产者发布确认回调。当消息到达Broker后回调，ack=true代表MQ收到消息，但不等于消息进队列；ack=false代表Broker拒收消息。如果消息到达交换机但是路由不到队列，confirm依旧true，此时触发ReturnCallback。一般结合消息id做消息补偿重试。
+
+容易混淆对比
+
+回调 什么时候触发 含义
+ConfirmCallback 消息抵达Broker交换机 确认服务器是否收到消息
+ReturnCallback 已到Broker，路由不到队列 消息被退回生产者
+消费者Ack 消费者处理业务 确认消费者处理完毕
+
+你这句话说到本质了，MQ本身根本不知道有这条消息存在，这个点面试特别爱考。
+
+场景：网络丢包，生产者发出消息，半路网络丢了，没到达Broker
+
+1. 数据包在网络上消失，RabbitMQ服务器完全没收到字节。
+2. Broker根本不知道有这条消息，自然也不会给生产者返回任何 confirm 回执。
+3. 此时  ConfirmCallback  不会被执行，既不会ack=true，也不会ack=false，回调一动不动，卡住。
+
+⚠️关键点：
+ ack=false  不是“网络丢包”触发；
+ ack=false  是 MQ收到你的请求，但是明确拒绝了你（比如交换机不存在、权限错误、内部报错），才会返回false回执。
+
+纯粹网络丢包：MQ连请求都看不到，就没有任何回执。ConfirmCallback不会跑。
+
+ 
+
+那这种“消息发出去石沉大海”怎么处理？
+
+Confirm回调解决不了网络丢包，因为对方根本没应答。
+解决方案思路：生产者本地维护记录 + 超时判断
+
+1. 发送消息前，在数据库存一条消息记录： msgId、内容、状态：待确认 
+2. 发送消息，带上  CorrelationData(msgId) 
+3. 如果收到  ConfirmCallback ：
+- ack=true → 更新数据库状态为【投递成功】
+- ack=false → 更新为【投递失败】，可以重试
+  4. 超时扫描任务：定时轮数据库，找出超过一定时间还处于「待确认」状态的消息。
+
+这些就是没有收到任何confirm回执，大概率网络丢包，重新发送。
+
+简单总结三种生产者情况
+
+1. 消息成功抵达Broker → ConfirmCallback ack=true
+2. 消息到达Broker，但是MQ拒绝处理（exchange不存在）→ ConfirmCallback ack=false
+3. 网络丢包，消息没到Broker → MQ一无所知，ConfirmCallback完全不触发，无任何回调
+
+ 
+
+容易踩坑的认知误区
+
+❌错误想法：只要消息没到MQ，confirm就返回false。
+✅真实：false是MQ主动拒绝应答；网络丢包是没有应答。
+
+所以只靠Confirm回调是不够保证生产者可靠性，必须配合本地数据库记录+超时补偿。
+
+顺带区分 ReturnCallback
+
+ReturnCallback的前提也是消息已经到达Broker；
+如果网络丢包，ReturnCallback同样也不会执行。
+
+ 
+
+面试口述版
+
+如果消息网络丢包没有到达MQ，Broker完全感知不到这条消息，不会产生任何confirm回执，ConfirmCallback不会执行。ack=false是Broker收到请求后主动拒绝才返回，不是网络丢包场景。针对这种石沉大海的情况，需要生产者本地数据库记录消息，定时扫描超时未得到回执的消息做重试补偿。
+
+ConfirmCallback vs ReturnCallback 核心区别
+
+先记住大前提：两个回调全部触发的必要条件：消息数据包已经到达 RabbitMQ Broker。
+
+如果网络丢包，数据包根本没到MQ：两个回调全都不执行。
+
+ConfirmCallback（发布确认回调）
+
+作用：确认 Broker（交换机）有没有收到这条消息
+触发两种情况：
+
+1.  ack = true ：Broker成功接收这条消息。
+
+⚠️仅仅代表消息交到交换机手上！不代表消息进队列，不代表路由成功。
+哪怕交换机收到，但是没有队列绑定，ack依旧是true！
+
+2.  ack = false ：Broker收到你的请求，但是明确拒绝接收消息。
+例子：交换机不存在、权限错误、内部异常，MQ收到包但是不收这条消息。
+
+参数： CorrelationData(消息ID), ack布尔, cause失败原因 
+ 
+ReturnCallback（消息退回回调）
+
+作用：消息已经到达Broker交换机，但是路由失败，找不到任何匹配队列，消息被打回生产者。
+
+触发条件：
+
+- 交换机收到消息（Confirm一定是ack=true）
+- 根据routing‑key找不到任何队列
+- 必须开启配置  publisher‑returns: true 
+ 
+此时 ConfirmCallback 执行(ack=true)，紧接着执行 ReturnCallback。
+
+Return拿到：消息本体、exchange、routingKey、错误码。
+
+ 
+
+4种场景完整走一遍，彻底分清
+
+场景1：正常，消息成功路由到队列
+
+1. 消息抵达Broker交换机
+2. ConfirmCallback →  ack=true  ✔
+3. ReturnCallback：不触发
+
+场景2：消息到交换机，但是路由不到队列（无绑定队列）
+
+1. 消息抵达Broker交换机
+2. ConfirmCallback →  ack=true  ✔（交换机收到了！）
+3. ReturnCallback 触发，告诉你路由失败，消息丢在MQ这边。
+
+这是面试最高频坑：很多人以为路由失败confirm会false，实际是true！
+
+场景3：交换机不存在，Broker拒收消息
+
+1. 数据包到达Broker
+2. ConfirmCallback →  ack=false ，给出拒绝原因
+3. ReturnCallback：不会触发（MQ直接拒绝，消息根本没交给交换机处理）
+
+场景4：网络丢包，数据包半路消失，没到MQ
+
+1. MQ完全不知道这条消息
+2. ConfirmCallback：不执行
+3. ReturnCallback：不执行
+
+需要生产者本地数据库+定时超时任务兜底。
+
+ 
+
+表格汇总
+
+项目 ConfirmCallback ReturnCallback
+什么时候触发 Broker收到消息，给生产者应答 消息到交换机，路由失败找不到队列
+ack=true含义 Broker成功收下消息（到交换机） 不会有ack，直接拿到被退回的完整消息
+路由失败无队列 ack依旧true ✅触发
+交换机不存在被拒绝 ack=false ❌不触发
+网络丢包没到MQ 不回调 不回调
+配置开关 publisher‑confirm‑type publisher‑returns: true
+拿到的数据 消息ID、ack布尔、失败原因 完整消息内容、exchange、routingKey
+
+面试背诵短句
+
+Confirm确认消息有没有送到Broker交换机；Return代表已经送到交换机，但是路由不到队列。
+路由失败的时候Confirm是ack=true，同时触发Return；交换机不存在拒绝消息，Confirm为false，Return不触发；网络丢包两个回调全都不执行，需要业务层数据库做超时补偿。
+
+业务开发怎么搭配用
+
+1. Confirm ack=false：立刻重试/记录失败
+2. Confirm ack=true，但是进入ReturnCallback：说明消息到MQ但是发不进队列，记录日志告警，人工检查绑定关系
+3. 两个回调都迟迟不来：定时任务扫描数据库超时消息，重试。
+
+注意：Return回调拿到消息，代表这条消息已经在MQ侧被丢弃了，不会存入任何队列。
+
+需要我顺带梳理：生产者消息丢失全部场景清单吗？
+Broker 和 Exchange（交换机）不是同一个东西
+
+Broker：指整个 RabbitMQ 服务实例（一整个MQ服务器进程）
+Exchange（交换机）：只是 Broker 内部的一个组件对象。
+
+打个房子的比方：
+
+- Broker = 整栋大楼（RabbitMQ服务）
+  大楼里面包含：交换机Exchange、队列Queue、绑定Binding、虚拟主机vhost、连接、用户权限，全部都在Broker里面。
+- Exchange交换机 = 大楼里面的「分拣前台」
+  生产者消息送到大楼（Broker），交给前台交换机，交换机负责分拣转发。
+- Queue队列 = 大楼里面的储物房间，存放消息
+
+ 
+
+对应之前Confirm回调逻辑，重新翻译一遍
+
+ConfirmCallback ack=true ：消息已经送到Broker大楼内部，并且交给交换机这个前台了。
+仅仅代表消息进了大楼，不代表消息成功送进储物房间（队列）。
+
+送到大楼交给前台（ack=true），但是前台发现没有对应的房间可以送，就触发  ReturnCallback ，消息在Broker内部直接丢弃。
+
+场景：交换机不存在
+
+生产者发送消息，指定一个不存在的exchange。
+消息数据包到达Broker（大楼收到你的网络请求），但是大楼里没有这个分拣前台。
+于是Broker直接拒绝这条消息 →  Confirm ack=false ，根本不会走到路由逻辑，Return不会触发。
+
+关键点区分：
+
+1. 消息抵达Broker：TCP数据包成功到达MQ服务进程。
+2. 交给Exchange交换机：Broker内部去找你指定的交换机组件。
+
+- 第一步没成功（网络丢包）：连Broker都没到，无任何回调。
+- 第一步成功，第二步失败（交换机不存在）：ack=false。
+- 第一步、第二步都成功，但是路由不到队列：ack=true，触发Return。
+
+ 
+
+Broker内部有很多组件，全部在一个服务进程里
+
+Broker（RabbitMQ服务进程）包含：
+
+1. vhost 虚拟主机（隔离命名空间）
+2. Exchange 交换机（分拣，不存消息）
+3. Queue 队列（真正存储消息）
+4. Binding 绑定关系（交换机→队列的规则）
+5. 连接、信道channel、权限管理、持久化数据
+
+一台机器可以启动多个Broker（多个RabbitMQ实例，端口不一样），组成集群。每个Broker内部各自有一套交换机、队列。
+
+面试容易混淆名词小结
+
+1. Broker：整个RabbitMQ服务实例。
+2. Exchange交换机：Broker内部，做消息路由转发，不存消息。
+3. Queue队列：Broker内部，存储消息。
+4. Channel信道：一条TCP连接里面分出多个轻量逻辑通道，我们API操作都是在channel上。
+
+一句话背诵
+
+Broker是完整的MQ服务；交换机只是Broker内部负责路由转发的组件。消息ack=true代表消息到达Broker并且交付给交换机，不等于消息进入队列。
+
+✅完全正确，就是这个逻辑。
+
+流程拆解：
+
+1. 网络数据包成功到达 Broker（RabbitMQ服务进程），TCP通信没问题。
+2. Broker解析你的AMQP报文：你要往名字叫  xxx_exchange  的交换机发消息。
+3. Broker在自己内部去找这个交换机对象：找不到。
+4. Broker直接拒绝这条消息，不会走到路由、不会走到队列，ReturnCallback完全不会触发。
+5. 给生产者回复 confirm 回执： ack = false ，同时带上失败原因（unknown exchange）。
+
+重点：
+
+- 已经到达Broker，只是Broker内部找不到你指定的交换机 →  confirm ack=false 
+- ReturnCallback 是交换机已经存在，消息成功给到交换机之后，路由找不到队列才会触发。
+
+对比两条失败链路
+
+1. ❌交换机不存在
+网络 → Broker收到包 → 无此交换机 → confirm(ack=false)，Return不执行
+2. ✅交换机存在，但是路由不到队列
+网络 → Broker收到包 → 找到交换机，交给交换机处理 → 没有匹配队列 → confirm(ack=true) + 触发ReturnCallback
+
+再对比网络丢包
+
+数据包半路丢了，根本没抵达Broker
+→ Broker什么都看不到，confirm回调完全不跑，既没有true，也没有false。
+
+面试一句话
+
+ack=false 的前提一定是消息已经到达Broker，只是Broker处理的时候发现异常（交换机不存在、权限不足等），主动拒绝消息；
+没到Broker的网络丢包，是没有任何confirm回执。
+
+这个坑面试特别喜欢问：
+
+“confirm的ack=false是不是网络丢包？”
+❌不是，ack=false代表已经到Broker，Broker明确拒绝。网络丢包是没有回调。
+RabbitMQ（AMQP）消息队列完整面试笔记
+
+一、基础概念
+
+1. Broker：指一整个RabbitMQ服务实例进程。一个Broker内部包含vhost、交换机、队列、绑定、信道、用户权限。一台机器可以启动多个Broker构成集群。
+2. vhost虚拟主机：Broker内的命名隔离空间，类似数据库，不同vhost的交换机、队列互相隔离。
+3. Producer生产者：发送消息；Consumer消费者：消费消息。
+4. Channel信道：一条TCP连接内部划分多条逻辑信道。
+
+TCP连接很重，不要每条消息新建TCP；复用TCP，多个Channel，每个Channel独立做AMQP操作。
+
+二、AMQP五大模型组件
+
+AMQP‑0‑9‑1是RabbitMQ遵循的协议；生产者不直接发给队列，发给Exchange交换机
+
+1. Exchange交换机：只负责路由转发，不存储消息。接收生产者消息，根据类型 + routing‑key + binding关系投递消息到队列。
+2. Binding绑定：交换机 ↔ 队列之间的绑定关系，绑定的时候指定binding‑key。
+3. Queue队列：真正存储消息，消费者从队列拿消息。
+4. Routing‑key：生产者发消息，贴在消息上的标签。
+5. Binding‑key：交换机绑定队列写的匹配规则。
+
+Direct模式：routing‑key与binding‑key完全相等；Topic模式binding‑key可以带通配符。
+
+Exchange四种类型
+
+1. Direct直连：routing‑key完全相等才匹配。点对点定向投递。
+2. Fanout广播：忽略routing‑key，消息复制发给所有绑定该交换机的队列。做广播通知。
+3. Topic主题：通配符匹配。 * 匹配一个单词； # 匹配0或多个单词；常用于日志。
+4. Headers头交换机：不靠routing‑key，靠消息headers匹配，几乎不用。
+
+完整消息流转
+
+生产者 →(routing‑key)→ Exchange交换机 → 根据binding规则 → Queue队列 → 消费者消费
+
+注意：RabbitMQ有默认交换机，可以直接发消息到队列，底层依然走direct默认交换机。
+
+三、生产者可靠性（防止生产者丢消息）
+
+1. ConfirmCallback 发布确认回调
+
+配置开启： publisher‑confirm‑type: correlated 
+ 
+含义：消息数据包到达Broker（RabbitMQ服务）之后，Broker给生产者回执回调。
+
+-  ack=true ：消息已经成功到达Broker，并且交付给交换机。
+
+⚠️不等于消息进入队列！只是交到交换机手上！
+交换机收到消息，但是路由不到队列，confirm依旧ack=true。
+
+-  ack=false ：数据包到达Broker，但是Broker明确拒绝这条消息。
+  场景：指定的交换机不存在、权限错误、内部异常。
+
+❗网络丢包：数据包根本没抵达Broker。ConfirmCallback完全不执行，没有true也没有false，MQ完全不知道这条消息存在。
+
+2. ReturnCallback 退回回调
+
+配置开启： publisher‑returns: true 
+触发条件：消息到达Broker、交给交换机，但是路由失败，找不到匹配队列。
+
+- Confirm回调ack=true，紧接着触发ReturnCallback。
+- Return可以拿到完整消息体、exchange、routingKey。
+- 触发Return代表这条消息在MQ侧直接丢弃，不会存入队列。
+
+对比记忆
+
+1. 交换机不存在 → confirm ack=false，Return不触发
+2. 交换机存在，路由不到队列 → confirm ack=true，触发Return
+3. 网络丢包 → 两个回调全部不执行
+
+3. 网络丢包如何兜底（回调解决不了）
+
+Confirm/Return都迟迟不执行：生产者本地数据库记录消息，状态=待确认；定时任务扫描超时的待确认消息，进行重试。
+
+- confirm ack=true：更新状态投递成功
+- confirm ack=false：更新失败，可重试
+- 超时未收到回执：判定大概率网络丢包，重试发送。
+
+只靠Confirm、Return不能100%保证生产者不丢消息，必须业务层数据库兜底。
+
+四、消费者可靠性（ACK机制，防止消费端丢消息）
+
+MQ队列收到消息推送给消费者，消息不会直接删除；等待消费者回执ack。
+
+basicAck(deliveryTag, multiple)
+
+- deliveryTag：MQ分配给每条消息的唯一编号。
+-  multiple=false ：只确认当前这一条消息。（多线程乱序消费必须用这个）
+-  multiple=true ：确认deliveryTag以及所有比它小的tag全部确认成功，批量确认。
+
+⚠️坑：多线程乱序消费严禁multiple=true，会把尚未处理完成的消息一并确认删除，消息丢失。适合顺序消费、prefetch预取多条消息场景，减少网络IO。
+
+basicNack(deliveryTag, multiple, requeue)
+
+可以批量拒绝消息
+
+1.  requeue = true ：消息重新放回原队列头部。会造成无限循环重复消费（死循环bug），永远不会进入死信队列。
+2.  requeue = false ：丢弃消息；如果配置死信队列DLX，消息转发死信；没有死信直接删除丢失。
+
+basicReject(deliveryTag,requeue)
+
+只能拒绝单条消息，没有multiple批量参数。
+
+重点：requeue=true不会进死信队列！
+
+五、死信队列 DLX（死信交换机）
+
+消息变成死信的4种条件，才会转发死信交换机：
+
+1. nack / reject，并且 requeue=false 
+2. 消息TTL过期
+3. 队列达到最大长度，消息溢出
+4. 注意：消费者断开连接，消息没有ack，不会成为死信，消息重回队列。
+
+requeue=true退回队列，不属于死信。
+
+业务最佳实践：消费异常，重试几次失败，调用nack(requeue=false)，消息转入死信队列，人工排查。不要一直requeue=true，CPU打爆。
+
+六、其他重要特性
+
+1. 消息持久化
+
+- 队列持久化：队列元数据存磁盘，Broker重启队列还在。
+- 消息持久化：消息体写入磁盘，重启消息不丢；如果不持久化，内存消息重启全部丢失。
+
+只有队列+消息同时持久化，消息才可以宕机不丢失。
+
+2. prefetch预取
+ channel.basicQos(prefetchCount) ，MQ一次性推多条消息给消费者本地缓存，不用消费一条发一条ack。提升吞吐量。
+
+注意：预取多条，如果多线程消费，ack一定要multiple=false。
+
+3. TTL消息过期
+两种设置：消息级别TTL；队列级别TTL。过期消息成为死信。
+
+七、消息丢失全链路梳理（面试高频）
+
+1）生产者端丢失
+
+1. 网络丢包，消息没到Broker → confirm无回调，本地DB+定时任务兜底
+2. 到达Broker，交换机不存在 → confirm ack=false，业务重试
+3. 到交换机，路由不到队列 → confirm ack=true，触发Return回调，告警
+
+开启confirm+return，加上业务数据库记录+定时补偿。
+
+2）MQ Broker端丢失
+
+队列未持久化 / 消息未持久化；Broker宕机重启消息丢失。
+
+解决方案：队列持久化、消息持久化；集群镜像队列。
+
+3）消费者端丢失
+
+还没有执行业务，代码异常，但是已经执行basicAck确认，消息被MQ删除。
+
+解决方案：先执行业务，业务处理成功之后再手动ack；不要自动ack。
+禁止自动Acknowledge自动确认模式。
+
+八、消息重复消费问题
+
+MQ不能保证消息只投递一次，只能保证至少投递一次（at‑least‑once）。
+产生重复原因：网络抖动，消费者处理完业务，ack回执网络丢了。MQ没有收到ack，消息重新投递。
+
+解决：业务做幂等性。
+
+1. 数据库唯一消息id约束；
+2. redis记录已经处理过的messageId；
+
+MQ本身不能帮你消除重复，业务层实现幂等。
+
+九、消息积压
+
+现象：队列消息越来越多，消费跟不上生产。
+原因：消费者处理慢；消费失败不断requeue重回队列；消费者下线。
+排查：看队列消息数量。
+处理：增加消费者；优化消费业务；临时导出消息。
+
+十、SpringBoot配置关键参数
+
+yaml
+
+spring:
+rabbitmq:
+publisher‑confirm‑type: correlated   #开启confirm回调
+publisher‑returns: true              #开启return回调
+ 
+ 
+java
+
+//生产者设置回调
+rabbitTemplate.setConfirmCallback((correlationData,ack,cause)->{});
+rabbitTemplate.setReturnsCallback(returnedMessage -> {});
+ 
+ 
+CorrelationData携带消息唯一ID，confirm回调回来拿到，用来对应是哪一条消息回执。
+
+十一、高频面试口述简答题
+
+1. confirm和return区别？
+
+confirm确认消息是否到达Broker交换机；return代表到达交换机但是路由不到队列。路由失败confirm依旧ack=true；交换机不存在confirm返回false，return不触发；网络丢包两个回调都不会执行。
+
+2. nack requeue=true/false区别？
+
+true消息放回原队列，不会进死信，容易死循环；false消息丢弃，有死信则转发死信。
+
+3. multiple参数含义？
+
+basicAck第二个参数，false单条确认；true批量确认tag以及之前所有消息。多线程消费禁止true。
+
+4. 死信队列什么时候才会收到消息？requeue=true会进死信吗？
+
+requeue=true不会进死信。只有requeue=false、TTL过期、队列满溢出才会。
+
+5. AMQP模型，交换机、队列、绑定关系。
+
+生产者发送给交换机，交换机根据binding和routing‑key路由消息到队列。交换机四种类型。
+
+6. 如何保证消息不丢失？
+
+生产者confirm+return +业务DB定时补偿；MQ队列消息持久化；消费者手动ack；集群高可用。
+
+7. MQ消息会重复吗，怎么解决？
+
+at‑least‑once至少一次投递，会重复，业务实现幂等。
+
+如果你需要，我可以给你精简版（面试背诵版，压缩一半）。

@@ -119,6 +119,9 @@ public class SecurityConfig {
                 // 格式与项目统一错误响应（Result）保持一致，方便前端 Axios 拦截器统一处理。
                 //
                 // code=40001 对应 ResultCode.NOT_LOGIN，前端识别后跳转登录页。
+                //
+                //Security 过滤器内部抛出的认证鉴权异常，不会跑到 @RestControllerAdvice 全局异常处理器！因为异常发生在过滤器层，还没到 DispatcherServlet，全局异常处理器是 DispatcherServlet 之后才生效。所以必须在这里配置。
+                //
                 .exceptionHandling(e -> e.authenticationEntryPoint((req, res, ex) -> {
                     res.setStatus(401);
                     res.setContentType("application/json;charset=UTF-8");
