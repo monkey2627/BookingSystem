@@ -365,7 +365,170 @@ spring.rabbitmq.listener.simple.prefetch: 1  # Consumer 每次只取 1 条，处
 
 ---
 
-## 九、Spring AMQP 编码实践
+## 九、消息序列化：Java 序列化 vs JSON
+
+### 默认 Java 序列化的问题
+
+Spring AMQP 默认使用 Java 原生序列化（`SimpleMessageConverter`），消息体是 Java 二进制格式：
+
+```
+问题一：可读性差  → RabbitMQ 管理后台看不懂消息内容，排查困难
+问题二：强类型耦合 → 消费者必须有完全相同的类（包名、类名、serialVersionUID），
+                     换语言或重构类名直接报错
+问题三：安全风险  → Java 反序列化存在 RCE（远程代码执行）历史漏洞
+```
+
+### 换成 Jackson JSON（推荐）
+
+```java
+@Configuration
+public class RabbitMQConfig {
+
+    // 替换默认的 SimpleMessageConverter
+    @Bean
+    public MessageConverter jsonMessageConverter() {
+        return new Jackson2JsonMessageConverter();
+    }
+
+    // RabbitTemplate 使用 JSON 序列化发消息
+    @Bean
+    public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory,
+                                         MessageConverter jsonMessageConverter) {
+        RabbitTemplate template = new RabbitTemplate(connectionFactory);
+        template.setMessageConverter(jsonMessageConverter);
+        return template;
+    }
+
+    // Listener 容器工厂也使用 JSON 反序列化接收消息
+    @Bean
+    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter jsonMessageConverter) {
+        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setMessageConverter(jsonMessageConverter);
+        return factory;
+    }
+}
+```
+
+配置后，MQ 里的消息变成标准 JSON，管理后台直接可读，且消费者不再依赖具体 Java 类的序列化版本。
+
+### 消息 DTO 的设计原则
+
+使用 JSON 序列化时，消息 DTO 无需实现 `Serializable`，但要注意：
+
+```java
+// 推荐写法：明确无参构造（Jackson 反序列化需要）
+@Data
+@Builder
+@NoArgsConstructor   // ← 必须有，Jackson 反序列化用
+@AllArgsConstructor
+public class RenderMessage {
+    private String taskId;
+    private TaskType taskType;
+    private Map<String, Object> payload;
+}
+```
+
+---
+
+## 十、Consumer 并发控制与资源隔离
+
+### prefetch 和 concurrentConsumers 的区别
+
+这两个参数经常混淆，但含义不同：
+
+| 参数 | 含义 | 效果 |
+|------|------|------|
+| `prefetch=N` | 每个 Consumer 线程最多预取 N 条未 ACK 的消息 | 控制单个消费者的"手里拿着"几条消息 |
+| `concurrentConsumers=N` | 启动 N 个 Consumer 线程并行消费 | 控制并发消费的线程数 |
+
+```
+prefetch=3, concurrentConsumers=2 的效果：
+
+Consumer线程1 ──预取──→ [消息A, 消息B, 消息C]  并行处理
+Consumer线程2 ──预取──→ [消息D, 消息E, 消息F]  并行处理
+
+最多同时处理 6 条消息（2 × 3）
+```
+
+### 配置方式
+
+**application.yml 方式**（简单场景）：
+```yaml
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        prefetch: 5           # 每个线程预取 5 条
+        concurrency: 3        # 启动 3 个消费者线程
+        max-concurrency: 10   # 流量高峰时最多扩到 10 个线程
+```
+
+**代码配置方式**（多队列、不同配置场景）：
+```java
+@Bean
+public SimpleRabbitListenerContainerFactory renderContainerFactory(
+        ConnectionFactory connectionFactory) {
+    SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+    factory.setConnectionFactory(connectionFactory);
+    factory.setConcurrentConsumers(1);
+    factory.setMaxConcurrentConsumers(1);
+    factory.setPrefetchCount(1);
+    return factory;
+}
+
+// 使用时指定 containerFactory
+@RabbitListener(queues = "render.queue", containerFactory = "renderContainerFactory")
+public void consume(RenderMessage message) { ... }
+```
+
+### 资源约束场景：为什么要 prefetch=1 + concurrentConsumers=1
+
+并不是所有场景都追求高并发。**当下游资源是独占瓶颈时，必须串行消费**：
+
+```
+场景：GPU 推理服务（TFAvatar 项目）
+  GPU 显存有限，同时跑两个推理任务 → OOM 崩溃
+  解决：prefetch=1 + concurrentConsumers=1，确保同一时刻只有一条消息在推理
+
+场景：数据库连接池只有 5 个连接
+  concurrentConsumers=5 是上限，超过会导致连接池耗尽
+
+场景：第三方 API 有限流（100次/秒）
+  需要通过并发数 + prefetch 联合控制调用速率
+```
+
+### Consumer 异常处理策略
+
+Consumer 方法抛出异常时，Spring AMQP 的默认行为是：**无限重试**（消息重新入队，一直消费失败，一直重试，可能造成消息风暴）。
+
+**推荐策略：捕获异常，不重新抛出，将失败状态持久化到 DB**：
+
+```java
+@RabbitListener(queues = "render.queue")
+public void consume(RenderMessage message) {
+    String taskId = message.getTaskId();
+    taskService.markProcessing(taskId);
+
+    try {
+        doInference(message);  // 调用 GPU 推理
+        taskService.markCompleted(taskId, resultPath);
+    } catch (Exception e) {
+        log.error("任务 {} 推理失败", taskId, e);
+        taskService.markFailed(taskId, e.getMessage());
+        // ⚠️ 不重新抛出异常：失败已记录到 DB，消息正常 ACK
+        // 避免消息无限重入队造成消息风暴
+    }
+}
+```
+
+这个模式的核心思想：**MQ 负责传递消息，DB 负责记录状态**。业务失败不等于消息传递失败，两者不应混为一谈。
+
+---
+
+## 十一、Spring AMQP 编码实践
 
 ### 配置声明
 
@@ -461,7 +624,7 @@ channel.basicReject(deliveryTag, requeue);
 
 ---
 
-## 十、项目实战：预约通知完整链路
+## 十二、项目实战：预约通知完整链路（mhp-booking）
 
 ### 完整流程图
 
@@ -520,7 +683,146 @@ mhp-booking：BookingServiceImpl.confirm()
 
 ---
 
-## 十一、常见面试题
+## 十三、项目实战：TFAvatar GPU 渲染异步任务队列
+
+### 问题背景
+
+TFAvatar 是一个基于 3D Gaussian Splatting 的人体虚拟形象重建系统。GPU 推理单次耗时 **5~30 秒**，若直接在 HTTP 请求线程内同步等待推理结果：
+
+```
+客户端发请求 ──等待30秒──→ HTTP超时（Nginx默认60s）
+同时多个用户请求 → 多个推理任务并发 → GPU显存溢出（OOM）
+```
+
+### 解决方案：RabbitMQ 异步 + MySQL 任务状态机
+
+```
+客户端
+  POST /api/avatar/render
+        │ 立即返回 taskId（< 5ms）
+        ▼
+  Spring Boot（Java）
+        │ 写入 MySQL render_task（status=PENDING）
+        │ 发布 RenderMessage 到 RabbitMQ
+        ▼
+  RabbitMQ（tfavatar.render.queue）
+        │ prefetch=1，串行投递，保护 GPU
+        ▼
+  RenderConsumer（Java）
+        │ 更新 status=PROCESSING
+        │ 调用 Python 推理服务（HTTP RestClient）
+        │ 接收 png_base64，解码保存到磁盘
+        │ 更新 status=COMPLETED + resultImageUrl
+        ▼
+  客户端轮询 GET /api/task/{taskId}
+        → status=COMPLETED 后访问 resultImageUrl 下载图片
+```
+
+### 关键设计决策
+
+**① 任务状态机（4态）**
+
+```
+PENDING ──Consumer取到消息──→ PROCESSING ──推理成功──→ COMPLETED
+                                           ──推理失败──→ FAILED
+```
+
+状态机存在 MySQL，即使 Java 服务重启，历史任务记录不丢失，前端可随时查询。
+
+**② prefetch=1 + concurrentConsumers=1（GPU 串行保护）**
+
+```java
+factory.setConcurrentConsumers(1);   // 只有 1 个 Consumer 线程
+factory.setMaxConcurrentConsumers(1);
+factory.setPrefetchCount(1);          // 每次只取 1 条消息
+```
+
+GPU 是独占资源，两个推理任务并发必然导致显存溢出。`prefetch=1` 确保 Consumer 手里始终只有 1 条消息，前一条处理完才取下一条，实现天然的资源保护。
+
+**③ 死信队列 + 消息 TTL（防消息积压）**
+
+```java
+Queue renderQueue = QueueBuilder.durable("tfavatar.render.queue")
+    .withArgument("x-dead-letter-exchange", "tfavatar.dlx")
+    .withArgument("x-dead-letter-routing-key", "dlq")
+    .withArgument("x-message-ttl", 30 * 60 * 1000)  // 30分钟过期
+    .build();
+```
+
+GPU 服务宕机时，消息不会无限积压：超过 30 分钟的消息自动进死信队列，运维可分析原因并决定是否重投。
+
+**④ Consumer 不重抛异常（避免消息风暴）**
+
+```java
+@RabbitListener(queues = "tfavatar.render.queue")
+public void consume(RenderMessage message) {
+    try {
+        doInference(message);
+    } catch (Exception e) {
+        taskService.markFailed(message.getTaskId(), e.getMessage());
+        // 不 throw：失败状态已写入 DB，消息正常 ACK 消费完毕
+        // 若 throw → 消息无限重投 → GPU 持续被打 → 雪崩
+    }
+}
+```
+
+### 完整 RabbitMQ 配置代码
+
+```java
+@Configuration
+public class RabbitMQConfig {
+
+    public static final String EXCHANGE     = "tfavatar.direct";
+    public static final String RENDER_QUEUE = "tfavatar.render.queue";
+    public static final String RENDER_KEY   = "render";
+    public static final String DLX_EXCHANGE = "tfavatar.dlx";
+    public static final String DLX_QUEUE    = "tfavatar.render.dlq";
+
+    @Bean public DirectExchange tfavatarExchange() {
+        return ExchangeBuilder.directExchange(EXCHANGE).durable(true).build();
+    }
+
+    @Bean public DirectExchange deadLetterExchange() {
+        return ExchangeBuilder.directExchange(DLX_EXCHANGE).durable(true).build();
+    }
+
+    @Bean public Queue renderQueue() {
+        return QueueBuilder.durable(RENDER_QUEUE)
+                .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
+                .withArgument("x-dead-letter-routing-key", "dlq")
+                .withArgument("x-message-ttl", 30 * 60 * 1000)
+                .build();
+    }
+
+    @Bean public Queue deadLetterQueue() {
+        return QueueBuilder.durable(DLX_QUEUE).build();
+    }
+
+    @Bean public Binding renderBinding(Queue renderQueue, DirectExchange tfavatarExchange) {
+        return BindingBuilder.bind(renderQueue).to(tfavatarExchange).with(RENDER_KEY);
+    }
+
+    @Bean public MessageConverter jsonMessageConverter() {
+        return new Jackson2JsonMessageConverter();  // JSON 序列化
+    }
+
+    @Bean
+    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory, MessageConverter jsonMessageConverter) {
+        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setMessageConverter(jsonMessageConverter);
+        factory.setConcurrentConsumers(1);      // GPU 串行保护
+        factory.setMaxConcurrentConsumers(1);
+        factory.setPrefetchCount(1);
+        return factory;
+    }
+}
+```
+
+---
+
+## 十四、常见面试题
 
 **Q：RabbitMQ 如何保证消息不丢失？**
 
@@ -549,3 +851,15 @@ Consumer 消费速度跟不上 Producer 发送速度导致 Queue 堆积。紧急
 **Q：`publisher-confirm-type: correlated` 和 `simple` 的区别？**
 
 `simple`：所有消息共享一个确认回调，无法区分哪条消息失败。`correlated`：每条消息有独立的 `CorrelationData`，可以精确追踪哪条消息未确认。生产环境应用 `correlated`。
+
+**Q：prefetch=1 和 concurrentConsumers=1 有什么区别，能否只设其中一个？**
+
+含义不同：`prefetch=1` 控制单个线程最多预取几条消息；`concurrentConsumers=1` 控制线程数。若只设 `concurrentConsumers=1` 但 `prefetch=5`，这一个线程会同时持有 5 条消息并行处理，仍可能导致资源竞争。GPU 串行场景需两者同时设为 1。
+
+**Q：为什么要用 JSON 序列化代替 Java 默认序列化？**
+
+Java 序列化：消息不可读、强依赖类路径和 serialVersionUID、有反序列化安全漏洞。JSON 序列化：消息可读便于调试、跨语言（Python/Go 也能消费）、类重构不影响消息格式。Spring AMQP 中配置 `Jackson2JsonMessageConverter` 替换即可。
+
+**Q：Consumer 抛出异常会怎样？应该如何处理？**
+
+Spring AMQP 默认行为：异常 → 消息重新入队 → 无限重试 → 可能造成消息风暴。正确策略：在 Consumer 内部 try-catch，业务失败时将失败状态持久化到 DB（而非依赖 MQ 重投），消息正常 ACK。只有临时性错误（如网络抖动）才考虑 requeue=true 重投，并设置最大重试次数上限。
