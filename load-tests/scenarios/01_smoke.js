@@ -10,7 +10,7 @@
 import http from 'k6/http';
 import { sleep } from 'k6';
 import { BASE_URL, THRESHOLDS, CODE } from '../config.js';
-import { login } from '../helpers/auth.js';
+import { login, indexToPhone } from '../helpers/auth.js';
 import { assertOk, assertBizOr } from '../helpers/checks.js';
 
 export const options = {
@@ -24,7 +24,7 @@ export function setup() {
   // 只需 2 个 token 做冒烟
   const tokens = [];
   for (let i = 1; i <= 2; i++) {
-    const t = login(`test_user_${i}`);
+    const t = login(indexToPhone(i));
     if (t) tokens.push(t);
   }
 
@@ -51,6 +51,10 @@ export function setup() {
 
 export default function (data) {
   const { tokens, merchantId, scheduleId } = data;
+  if (tokens.length === 0) {
+    console.error('没有可用 token，登录全部失败，请检查测试账号是否已播种');
+    return;
+  }
   const token = tokens[__VU % tokens.length];
   const headers = { 'Content-Type': 'application/json', token };
 
