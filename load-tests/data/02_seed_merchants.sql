@@ -10,7 +10,7 @@
 --   - 使用子查询获取真实 user_id，不硬编码
 --   - 幂等：INSERT IGNORE 遇到唯一键冲突时跳过
 
-INSERT IGNORE INTO merchant (user_id, service_types, intro, city, avg_score, review_count, is_deleted)
+INSERT IGNORE INTO merchant (user_id, service_types, intro, city, avg_score, review_count)
 SELECT
   id,
   JSON_ARRAY(FLOOR(1 + RAND() * 3)),   -- 随机服务类型 1~3
@@ -23,8 +23,7 @@ SELECT
     ELSE '成都'
   END,
   ROUND(3.5 + RAND() * 1.5, 1),        -- 随机评分 3.5~5.0
-  FLOOR(RAND() * 100),
-  0
+  FLOOR(RAND() * 100)
 FROM user
 WHERE username LIKE 'test_user_%'
 ORDER BY id

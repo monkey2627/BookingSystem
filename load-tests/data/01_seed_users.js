@@ -20,13 +20,13 @@ export const options = {
 };
 
 export default function () {
-  const idx = __ITER + 1;  // __ITER 从 0 开始，用户名从 1 开始
-  const username = `test_user_${idx}`;
+  const idx = __ITER + 1;  // __ITER 从 0 开始，序号从 1 开始
+  const phone = '199' + String(idx).padStart(8, '0');  // 19900000001 ~ 19900000200
 
   const res = http.post(
     `${BASE_URL}/api/user/register`,
     JSON.stringify({
-      username: username,
+      phone: phone,
       password: USER_PASSWORD,
       nickname: `测试用户${idx}`,
     }),

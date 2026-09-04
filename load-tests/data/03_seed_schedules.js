@@ -20,13 +20,13 @@ export const options = {
   iterations: 1,
 };
 
-function login(username) {
+function login(phone) {
   const res = http.post(
     `${BASE_URL}/api/user/login`,
-    JSON.stringify({ username, password: USER_PASSWORD }),
+    JSON.stringify({ phone, password: USER_PASSWORD }),
     { headers: { 'Content-Type': 'application/json' } }
   );
-  if (res.status !== 200) return null;
+  if (res.status !== 200 || res.json('code') !== 200) return null;
   return res.json('data.token');
 }
 
@@ -53,21 +53,22 @@ function formatDate(offsetDays) {
 
 export default function () {
   for (let merchantIdx = 1; merchantIdx <= 50; merchantIdx++) {
-    const token = login(`test_user_${merchantIdx}`);
+    const phone = '199' + String(merchantIdx).padStart(8, '0');
+    const token = login(phone);
     if (!token) {
-      console.warn(`test_user_${merchantIdx} login failed, skip`);
+      console.warn(`${phone} login failed, skip`);
       continue;
     }
 
     for (let dayOffset = 1; dayOffset <= 14; dayOffset++) {
       const date = formatDate(dayOffset);
 
-      // 普通预约档期
-      const r1 = createSchedule(token, date, '上午 10:00-12:00', 0);
+      // 普通预约档期（timeSlot 格式必须匹配 HH:mm-HH:mm）
+      const r1 = createSchedule(token, date, '10:00-12:00', 0);
       check(r1, { 'schedule created or exists': (r) => r.status === 200 });
 
       // 抢档期（用于 spike 测试）
-      const r2 = createSchedule(token, date, '下午 14:00-16:00', 1);
+      const r2 = createSchedule(token, date, '14:00-16:00', 1);
       check(r2, { 'rush schedule created or exists': (r) => r.status === 200 });
 
       sleep(0.02);
