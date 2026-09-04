@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **档期预约平台** — Cosplay 社区预约平台，连接妆娘/摄影/毛娘等服务方（商家）与客人。
 
-- **后端**：`BookSystem/`（Spring Boot 3.2 / Java 21 / MyBatis-Plus / Sa-Token）
+- **后端**：`BookSystem/`（Spring Boot 3.2 / Java 21 / MyBatis-Plus / Spring Security + JWT）
 - **前端**：`cosplay-frontend/`（Vue 3 + TypeScript + Pinia + Element Plus）
 - **数据库名**：`mhp`（`resources/application.yaml`）
 - **后端包路径**：`com.mhp.booksystem`
@@ -53,7 +53,10 @@ npm run build  # 生产构建
 | Mapper XML | `resources/mapper/MerchantMapper.xml`（商家搜索）、`MessageMapper.xml`（会话列表）、`FollowMapper.xml` |
 | WebSocket 配置 | `config/WebSocketConfig.java` |
 | STOMP 认证拦截器 | `websocket/StompAuthChannelInterceptor.java` |
-| Sa-Token 路由拦截器 | `config/SaTokenConfig.java` |
+| Spring Security 配置 | `config/SecurityConfig.java`（各微服务各自一份） |
+| JWT 认证过滤器 | `security/JwtAuthenticationFilter.java`（各微服务各自一份） |
+| JWT 工具类 | `mhp-common` 的 `security/JwtUtil.java` |
+| 取当前用户 ID | `mhp-common` 的 `security/SecurityUtil.getCurrentUserId()` |
 | RabbitMQ 配置 | `config/RabbitConfig.java` |
 | MQ 通知发送 / 消费 | `mq/MQSender.java`、`mq/NotifyConsumer.java`（消费后推 WebSocket） |
 | MQ 消息体 | `mq/NotifyMessage.java` |
@@ -128,9 +131,18 @@ ES 相关文件：
 
 ## 关键实现模式
 
-### Sa-Token 鉴权
+### Spring Security + JWT 鉴权
 
-token 通过 HTTP Header `token` 传递（不用 Cookie）。Sa-Token 路由白名单：`/api/user/login`、`/api/user/register`、`/ws/**`。Service 层用 `StpUtil.getLoginIdAsLong()` 取当前用户 id。
+token 通过 HTTP Header `token` 传递（不用 Cookie）。JWT 有效期 7 天，纯计算验签，无 Redis IO。
+
+**白名单（各服务 SecurityConfig 的 permitAll）：**
+- mhp-account：`/api/user/login`、`/api/user/register`、`/internal/**`
+- mhp-booking：`/internal/**`
+- mhp-social：`/internal/**`、`/ws/**`、`/api/post/feed`
+
+**未登录响应**：401 JSON `{"code":40001,"msg":"请先登录","data":null}`
+
+**Service 层取当前用户 id**：`SecurityUtil.getCurrentUserId()`（从 SecurityContextHolder 读，O(1) 无 IO）
 
 ### 商家主页缓存（Cache Aside + 防三缓）
 
@@ -154,7 +166,7 @@ boolean locked = lock.tryLock(3, 30, TimeUnit.SECONDS);
 ### WebSocket（STOMP over SockJS）
 
 - 端点：`/ws`，SockJS 降级
-- `StompAuthChannelInterceptor` 拦截 CONNECT 命令，从 native header 取 `token`，用 `StpUtil.getLoginIdByToken()` 验证后 `setUser()`
+- `StompAuthChannelInterceptor` 拦截 CONNECT 帧，从 native header 取 `token`，调 `JwtUtil.parse(token)` 解析 userId 后 `accessor.setUser(() -> userId)`
 - `NotifyConsumer` 消费 MQ 通知后调用 `messagingTemplate.convertAndSendToUser()` 推送到 `/queue/notify`
 - `MessageServiceImpl` 保存消息后推送到 `/queue/messages`
 - 前端订阅：`/user/queue/messages`（聊天）、`/user/queue/notify`（系统通知）
@@ -344,8 +356,8 @@ Spring Boot 的核心魔法：**只需引入依赖，框架自动帮你配好相
 | `@RestControllerAdvice` | 全局异常处理 | `ExceptionHandlerExceptionResolver` 扫描后建立"异常类型→处理方法"映射表 |
 | `@Aspect` | AOP 切面 | Spring AOP 为目标类创建代理，在切入点前后插入增强逻辑 |
 
-`WebMvcConfigurer` 实现类（如 `SaTokenConfig`）被扫描为 Bean 后，Spring 在初始化 MVC 时依次回调其钩子方法：
-- `addInterceptors(registry)` — 注册拦截器（本项目：注册 SaInterceptor 做登录校验）
+`WebMvcConfigurer` 实现类（如 `WebConfig`）被扫描为 Bean 后，Spring 在初始化 MVC 时依次回调其钩子方法：
+- `addInterceptors(registry)` — 注册拦截器（本项目鉴权走 Spring Security Filter 链，不走 MVC 拦截器）
 - `addCorsMappings(registry)` — 配置跨域
 - `addResourceHandlers(registry)` — 静态资源映射
 - ……等约 20 个扩展点
@@ -367,13 +379,15 @@ Spring Boot 的核心魔法：**只需引入依赖，框架自动帮你配好相
     ↓
 [DispatcherServlet] Spring MVC 的总前端控制器，所有 HTTP 请求的唯一入口
 
-    ↓ ── 拦截器链 preHandle 阶段 ───────────────────────────────────────────────
-[SaInterceptor.preHandle()]
-  1. 从 Header 取 token 字符串
-  2. 用 token 查 Redis（token→userId 记录）
-       ├─ 不存在 / 已过期 → 抛 NotLoginException → 跳到"异常路径"
-       └─ 存在且有效     → 将 userId 写入当前线程的 ThreadLocal
-  3. 白名单路径（/login /register /internal/**）→ 跳过第2步，直接放行
+    ↓ ── Spring Security Filter 链 ──────────────────────────────────────────────
+[JwtAuthenticationFilter（OncePerRequestFilter）]
+  1. 从 Header "token" 取 JWT 字符串
+  2. JwtUtil.parse(token) 验签并解析出 userId（纯计算，无 Redis IO）
+       ├─ 解析成功 → 构造 Authentication 写入 SecurityContextHolder
+       └─ 无 token / 非法 → context 为空，继续往下走
+[AuthorizationFilter]
+  ├─ 白名单路径（permitAll）→ 直接放行
+  └─ 受保护路径 + context 为空 → 触发 AuthenticationEntryPoint → 返回 401 JSON
 
     ↓ ── Handler 映射 ──────────────────────────────────────────────────────────
 根据 URL + HTTP Method 在映射表里找到目标 Controller 方法
@@ -388,7 +402,7 @@ Spring 将请求 Body（JSON）反序列化为 BookingCreateDTO
     ↓ ── Controller 方法体 ─────────────────────────────────────────────────────
 BookingController.create(dto):
   调用 BookingService.create(dto)
-  Service 内 StpUtil.getLoginIdAsLong() 从 ThreadLocal 读 userId（O(1)，无 Redis 查询）
+  Service 内 SecurityUtil.getCurrentUserId() 从 SecurityContextHolder 读 userId（O(1)，无 IO）
   ├─ 正常完成 → 返回 Result.ok(data)
   └─ 业务异常 → throw new BusinessException(ResultCode.BOOKING_DUPLICATE)
 
@@ -406,8 +420,8 @@ BookingController.create(dto):
 [返回值序列化] ←─────────────────────────┘
   @ResponseBody 将 Result 对象序列化为 JSON，写入 HTTP 响应体
 
-    ↓ ── 拦截器链 afterCompletion 阶段 ────────────────────────────────────────
-Sa-Token 清除当前线程的 ThreadLocal（无论正常还是异常都会执行）
+    ↓ ── Spring Security 请求后清理 ──────────────────────────────────────────
+SecurityContextHolder 自动清除（SecurityContextPersistenceFilter 的 finally 块）
 防止线程归还到池后，数据残留污染下一个请求
 
     ↓
@@ -423,14 +437,14 @@ Sa-Token 清除当前线程的 ThreadLocal（无论正常还是异常都会执�
 
 | 概念 | 发生时机 | 作用 |
 |------|---------|------|
-| `@Configuration` + `WebMvcConfigurer` | 启动期 | Spring 回调 `addInterceptors()` 等方法，注册拦截器和 MVC 扩展配置 |
+| `@Configuration` + `WebMvcConfigurer` | 启动期 | Spring 回调 `addCorsMappings()` 等方法，注册 MVC 扩展配置 |
 | `@RestControllerAdvice` | 启动期扫描，请求期使用 | 全局异常兜底，统一错误响应格式 |
-| `SaInterceptor.preHandle()` | 请求到达，进 Controller 前 | 验证 token，将 userId 写入 ThreadLocal |
+| `JwtAuthenticationFilter` | DispatcherServlet 之前（Security Filter 链） | 解析 JWT，将 userId 写入 SecurityContextHolder |
+| `AuthorizationFilter` | JwtAuthenticationFilter 之后 | 按 permitAll / authenticated 规则决定放行或 401 |
 | `@Valid` + Hibernate Validator | 进 Controller 前（参数绑定后） | 校验 DTO 字段，失败直接返回 400，不进方法体 |
-| `StpUtil.getLoginIdAsLong()` | Controller / Service 中 | 从 ThreadLocal 读当前用户 id，O(1) 无 IO |
+| `SecurityUtil.getCurrentUserId()` | Controller / Service 中 | 从 SecurityContextHolder 读当前用户 id，O(1) 无 IO |
 | `BusinessException` | Service 中 `throw` | 携带 ResultCode，被 GlobalExceptionHandler 捕获转为统一错误响应 |
-| `afterCompletion()` | Controller 返回后 | ThreadLocal 清理，防内存泄漏和数据污染 |
-| Tomcat 线程 | 贯穿整个请求 | 1请求=1线程，ThreadLocal 与之同生共死；同一用户的不同请求使用不同线程 |
+| Tomcat 线程 | 贯穿整个请求 | 1请求=1线程，SecurityContextHolder 与之同生共死（STATELESS 模式不创建 Session） |
 
 ---
 
@@ -462,7 +476,7 @@ Sa-Token 清除当前线程的 ThreadLocal（无论正常还是异常都会执�
 
 **mhp-account** — 最简单，先读
 
-1. `UserServiceImpl` — 注册/登录（MD5 + Sa-Token 写 Redis）
+1. `UserServiceImpl` — 注册/登录（BCrypt 密码校验 + `JwtUtil.generate(userId)` 返回 JWT）
 2. `MerchantServiceImpl` — 重点看 `getDetail()`，三缓防护 + Redisson 双重检查完整实现
 
 **mhp-booking** — 核心模块
@@ -484,7 +498,8 @@ Sa-Token 清除当前线程的 ThreadLocal（无论正常还是异常都会执�
 
 ### 第四层：基础设施（理解"为什么能跑起来"）
 
-- `config/SaTokenConfig.java`（任意一个服务）— 白名单拦截器原理
+- `config/SecurityConfig.java`（任意一个服务）— Security Filter 链配置、白名单 permitAll 规则、401 响应格式
+- `security/JwtAuthenticationFilter.java` — JWT 解析并写入 SecurityContextHolder 的时机和原理
 - `config/MyMetaObjectHandler.java` — createTime/updateTime 自动填充
 - `websocket/StompAuthChannelInterceptor.java` — WS 握手时如何验 token、为什么在这里而不在 HTTP 拦截器
 - `config/WebSocketConfig.java` — STOMP 端点、消息代理、用户目的地前缀
@@ -509,7 +524,7 @@ Sa-Token 清除当前线程的 ThreadLocal（无论正常还是异常都会执�
 跑通这个场景，基本全懂了：
 
 ```
-用户登录（UserService + Sa-Token + Redis）
+用户登录（UserService + BCrypt 校验 + JwtUtil 签发 JWT）
   → 搜索商家（MerchantMapper XML + JSON_CONTAINS）
   → 查看主页（getDetail 三缓防护 + Redisson）
   → 发起预约（BookingService + Redisson 分布式锁）

@@ -1,6 +1,5 @@
 package com.mhp.booksystem.common.exception;
 
-import cn.dev33.satoken.exception.NotLoginException;
 import com.mhp.booksystem.common.Result;
 import com.mhp.booksystem.common.ResultCode;
 import lombok.extern.slf4j.Slf4j;
@@ -27,7 +26,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  *   → 注册为 Bean 放入 IoC 容器
  *   → Spring MVC 内置组件 ExceptionHandlerExceptionResolver 扫描所有 @ControllerAdvice Bean，
  *     读取每个 @ExceptionHandler 方法，在内存里建好一张"异常类型 → 处理方法"映射表：
- *       NotLoginException                    → handleNotLogin()
  *       BusinessException                    → handleBusiness()
  *       MethodArgumentNotValidException      → handleValidation()
  *       HttpRequestMethodNotSupportedException → handleMethodNotSupported()
@@ -56,16 +54,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
-
-    /**
-     * Sa-Token 未登录异常。
-     * 触发时机：请求未携带 token，或 token 已过期/被踢出，Sa-Token 路由拦截器抛出此异常。
-     * 前端 Axios 拦截器收到 401 后自动跳转登录页。
-     */
-    @ExceptionHandler(NotLoginException.class)
-    public Result<?> handleNotLogin(NotLoginException e) {
-        return Result.fail(ResultCode.UNAUTHORIZED);
-    }
 
     /**
      * 业务异常（预期内错误）。
