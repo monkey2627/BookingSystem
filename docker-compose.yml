@@ -168,6 +168,52 @@ services:
       mysql:
         condition: service_healthy
 
+  # ── InfluxDB 1.8（k6 压测指标存储）────────────────────────────
+  # k6 原生支持 InfluxDB 1.x 输出协议
+  # 运行 k6 时：k6 run --out influxdb=http://localhost:8086/k6 scenarios/xx.js
+  influxdb:
+    image: influxdb:1.8
+    container_name: mhp-influxdb
+    environment:
+      INFLUXDB_DB: k6
+      INFLUXDB_HTTP_AUTH_ENABLED: "false"
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb
+
+  # ── Prometheus（抓取 Spring Boot Actuator 指标）───────────────
+  # 控制台：http://localhost:9090
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mhp-prometheus
+    volumes:
+      - ./monitor/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+
+  # ── Grafana（可视化看板）──────────────────────────────────────
+  # 控制台：http://localhost:3000  admin/admin
+  # 导入看板：
+  #   - 2587（k6 压测指标，数据源 InfluxDB）
+  #   - 4701（JVM 监控，数据源 Prometheus）
+  #   - 11378（Spring Boot 应用，数据源 Prometheus）
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mhp-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3000:3000"
+    depends_on:
+      - influxdb
+      - prometheus
+
   # ── AI Agent 服务（Python FastAPI + LangChain + DeepSeek）─────
   # 访问：http://localhost:8084
   # 环境变量 DEEPSEEK_API_KEY 通过 .env 文件注入（复制 mhp-ai/.env.example 为 mhp-ai/.env）
@@ -197,3 +243,4 @@ volumes:
   redis-data:
   nacos-data:
   es-data:
+  influxdb-data:

@@ -103,6 +103,16 @@
             <artifactId>dubbo-spring-boot-starter</artifactId>
         </dependency>
 
+        <!-- Actuator + Prometheus（压测监控，暴露 /actuator/prometheus） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
         <!-- 配置提示 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

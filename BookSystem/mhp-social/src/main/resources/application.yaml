@@ -44,6 +44,15 @@ qiniu:
   bucket: your-bucket-name
   domain: cdn.your-domain.com
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

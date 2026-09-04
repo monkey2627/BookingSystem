@@ -48,6 +48,15 @@ xxl:
       logpath: ./logs/xxl-job
       logretentiondays: 30
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

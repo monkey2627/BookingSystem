@@ -40,6 +40,15 @@ springdoc:
 server:
   port: 8081
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
 # Canal CDC 客户端配置
 # Canal server 在 docker-compose 中以 canal/canal-server:v1.1.7 运行
 # destination 与 Canal server 的 canal.destinations 环境变量保持一致
