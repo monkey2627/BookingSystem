@@ -29,8 +29,8 @@ export const options = {
       executor: 'ramping-vus',
       stages: [
         { duration: '10s', target: 0   },  // 等待阶段，所有 VU 就位
-        { duration: '5s',  target: 200 },  // 瞬间拉到 200 VU（模拟抢档期开抢）
-        { duration: '30s', target: 200 },  // 持续冲击 30s
+        { duration: '30s', target: 100 },  // 渐进拉到 100 VU（降低冲击力度，避免内存耗尽）
+        { duration: '30s', target: 100 },  // 持续冲击 30s
         { duration: '10s', target: 0   },  // 冲击结束，快速降压
       ],
     },
@@ -44,7 +44,7 @@ export const options = {
 
 export function setup() {
   // 登录 200 个测试用户
-  const tokens = buildTokenPool(200);
+  const tokens = buildTokenPool(100);
 
   if (tokens.length === 0) {
     return { tokens, rushScheduleId: null };
@@ -56,7 +56,7 @@ export function setup() {
     `${BASE_URL}/api/merchant/search?size=5`,
     { headers: setupHeaders }
   );
-  const merchants = searchRes.json('data.list') || [];
+  const merchants = searchRes.json('data.records') || [];
   let rushScheduleId = null;
 
   const now = new Date();

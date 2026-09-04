@@ -36,10 +36,10 @@ export function setup() {
 
   // 获取商家列表，取第一个商家 id
   const searchRes = http.get(
-    `${BASE_URL}/api/merchant/search?keyword=测试&size=1`,
+    `${BASE_URL}/api/merchant/search?keyword=${encodeURIComponent('测试')}&size=1`,
     { headers: setupHeaders }
   );
-  const merchants = searchRes.json('data.list') || [];
+  const merchants = searchRes.json('data.records') || [];
   const merchantId = merchants.length > 0 ? merchants[0].id : null;
 
   // 获取该商家本月档期
@@ -70,7 +70,7 @@ export default function (data) {
 
   // Step 1: 搜索商家
   const searchRes = http.get(
-    `${BASE_URL}/api/merchant/search?keyword=测试&page=1&size=10`,
+    `${BASE_URL}/api/merchant/search?keyword=${encodeURIComponent('测试')}&page=1&size=10`,
     { headers }
   );
   assertOk(searchRes, 'search');

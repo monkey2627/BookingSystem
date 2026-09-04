@@ -41,7 +41,7 @@ export function setup() {
     `${BASE_URL}/api/merchant/search?size=20`,
     { headers: setupHeaders }
   );
-  const merchants = searchRes.json('data.list') || [];
+  const merchants = searchRes.json('data.records') || [];
   const merchantIds = merchants.map((m) => m.id);
 
   const now = new Date();
