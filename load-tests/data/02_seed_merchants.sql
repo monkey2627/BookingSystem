@@ -25,6 +25,6 @@ SELECT
   ROUND(3.5 + RAND() * 1.5, 1),        -- 随机评分 3.5~5.0
   FLOOR(RAND() * 100)
 FROM user
-WHERE nickname LIKE 'test_user_%'
+WHERE phone LIKE '1990000%'
 ORDER BY id
 LIMIT 50;
