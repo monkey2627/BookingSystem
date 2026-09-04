@@ -28,8 +28,17 @@ export function setup() {
     if (t) tokens.push(t);
   }
 
+  if (tokens.length === 0) {
+    return { tokens, merchantId: null, scheduleId: null };
+  }
+
+  const setupHeaders = { 'Content-Type': 'application/json', token: tokens[0] };
+
   // 获取商家列表，取第一个商家 id
-  const searchRes = http.get(`${BASE_URL}/api/merchant/search?keyword=测试&size=1`);
+  const searchRes = http.get(
+    `${BASE_URL}/api/merchant/search?keyword=测试&size=1`,
+    { headers: setupHeaders }
+  );
   const merchants = searchRes.json('data.list') || [];
   const merchantId = merchants.length > 0 ? merchants[0].id : null;
 
@@ -39,7 +48,8 @@ export function setup() {
   let scheduleId = null;
   if (merchantId) {
     const schRes = http.get(
-      `${BASE_URL}/api/schedule/month?merchantId=${merchantId}&yearMonth=${yearMonth}`
+      `${BASE_URL}/api/schedule/month?merchantId=${merchantId}&yearMonth=${yearMonth}`,
+      { headers: setupHeaders }
     );
     const schedules = schRes.json('data') || [];
     const available = schedules.find((s) => s.status === 0 && s.bookType === 0);
@@ -59,13 +69,16 @@ export default function (data) {
   const headers = { 'Content-Type': 'application/json', token };
 
   // Step 1: 搜索商家
-  const searchRes = http.get(`${BASE_URL}/api/merchant/search?keyword=测试&page=1&size=10`);
+  const searchRes = http.get(
+    `${BASE_URL}/api/merchant/search?keyword=测试&page=1&size=10`,
+    { headers }
+  );
   assertOk(searchRes, 'search');
   sleep(0.5);
 
   // Step 2: 查看商家主页
   if (merchantId) {
-    const detailRes = http.get(`${BASE_URL}/api/merchant/${merchantId}`);
+    const detailRes = http.get(`${BASE_URL}/api/merchant/${merchantId}`, { headers });
     assertOk(detailRes, 'merchant-detail');
     sleep(0.5);
   }

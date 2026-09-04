@@ -14,7 +14,7 @@
 
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { BASE_URL, USER_COUNT, USER_PASSWORD, THRESHOLDS, CODE } from '../config.js';
+import { BASE_URL, THRESHOLDS, CODE } from '../config.js';
 import { buildTokenPool, authHeaders } from '../helpers/auth.js';
 import { assertOk, assertBizOr } from '../helpers/checks.js';
 
@@ -30,8 +30,16 @@ export const options = {
 export function setup() {
   const tokens = buildTokenPool(100);  // 用 100 个账号池化，减少 token 过期风险
 
+  if (tokens.length === 0) {
+    return { tokens, merchantIds: [], scheduleIds: [] };
+  }
+  const setupHeaders = { 'Content-Type': 'application/json', token: tokens[0] };
+
   // 获取可用商家和档期（真实 ID）
-  const searchRes = http.get(`${BASE_URL}/api/merchant/search?size=20`);
+  const searchRes = http.get(
+    `${BASE_URL}/api/merchant/search?size=20`,
+    { headers: setupHeaders }
+  );
   const merchants = searchRes.json('data.list') || [];
   const merchantIds = merchants.map((m) => m.id);
 
@@ -40,7 +48,10 @@ export function setup() {
   const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const scheduleIds = [];
   for (const mid of merchantIds.slice(0, 5)) {
-    const schRes = http.get(`${BASE_URL}/api/schedule/month?merchantId=${mid}&yearMonth=${yearMonth}`);
+    const schRes = http.get(
+      `${BASE_URL}/api/schedule/month?merchantId=${mid}&yearMonth=${yearMonth}`,
+      { headers: setupHeaders }
+    );
     const schedules = schRes.json('data') || [];
     schedules.filter((s) => s.status === 0 && s.bookType === 0).forEach((s) => scheduleIds.push(s.id));
   }
@@ -51,26 +62,31 @@ export function setup() {
 export default function (data) {
   const { tokens, merchantIds, scheduleIds } = data;
 
-  // 70% 浏览行为（无鉴权）
+  // 70% 浏览行为
   if (Math.random() < 0.7) {
-    browseFlow(merchantIds);
+    browseFlow(tokens, merchantIds);
   } else {
     // 30% 预约行为（需鉴权）
     bookingFlow(tokens, scheduleIds);
   }
 }
 
-function browseFlow(merchantIds) {
+function browseFlow(tokens, merchantIds) {
+  const headers = authHeaders(tokens);
+
   // 搜索商家
   const q = ['北京', '上海', '妆娘', '摄影', ''][Math.floor(Math.random() * 5)];
-  const searchRes = http.get(`${BASE_URL}/api/merchant/search?keyword=${encodeURIComponent(q)}&size=10`);
+  const searchRes = http.get(
+    `${BASE_URL}/api/merchant/search?keyword=${encodeURIComponent(q)}&size=10`,
+    { headers }
+  );
   assertOk(searchRes, 'search');
   sleep(0.3 + Math.random() * 0.5);
 
   // 查看商家主页（命中缓存的高频路径）
   if (merchantIds.length > 0) {
     const mid = merchantIds[Math.floor(Math.random() * merchantIds.length)];
-    const detailRes = http.get(`${BASE_URL}/api/merchant/${mid}`);
+    const detailRes = http.get(`${BASE_URL}/api/merchant/${mid}`, { headers });
     assertOk(detailRes, 'merchant-detail');
     sleep(0.5 + Math.random() * 1);
   }
@@ -86,8 +102,6 @@ function bookingFlow(tokens, scheduleIds) {
     JSON.stringify({ scheduleId: sid }),
     { headers }
   );
-  // 档期被预约后 status=1，再次预约返回 SCHEDULE_NOT_AVAILABLE(10004)
-  // 同用户重复预约返回 BOOKING_DUPLICATE(20001)
   assertBizOr(res, 'booking', [CODE.OK, CODE.BOOKING_DUPLICATE, CODE.SCHEDULE_NOT_AVAILABLE]);
   sleep(1 + Math.random() * 2);
 }

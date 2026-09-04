@@ -31,7 +31,16 @@ export const options = {
 
 export function setup() {
   const tokens = buildTokenPool(50);
-  const searchRes = http.get(`${BASE_URL}/api/merchant/search?size=20`);
+
+  if (tokens.length === 0) {
+    return { tokens, merchantIds: [], scheduleIds: [] };
+  }
+  const setupHeaders = { 'Content-Type': 'application/json', token: tokens[0] };
+
+  const searchRes = http.get(
+    `${BASE_URL}/api/merchant/search?size=20`,
+    { headers: setupHeaders }
+  );
   const merchants = searchRes.json('data.list') || [];
   const merchantIds = merchants.map((m) => m.id);
 
@@ -39,7 +48,10 @@ export function setup() {
   const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const scheduleIds = [];
   for (const mid of merchantIds.slice(0, 5)) {
-    const schRes = http.get(`${BASE_URL}/api/schedule/month?merchantId=${mid}&yearMonth=${yearMonth}`);
+    const schRes = http.get(
+      `${BASE_URL}/api/schedule/month?merchantId=${mid}&yearMonth=${yearMonth}`,
+      { headers: setupHeaders }
+    );
     const schedules = schRes.json('data') || [];
     schedules.filter((s) => s.status === 0 && s.bookType === 0).forEach((s) => scheduleIds.push(s.id));
   }
@@ -54,8 +66,9 @@ export default function (data) {
   if (Math.random() < 0.7) {
     // 70% 浏览流（高频缓存命中路径）
     if (merchantIds.length > 0) {
+      const headers = authHeaders(tokens);
       const mid = merchantIds[Math.floor(Math.random() * merchantIds.length)];
-      const r = http.get(`${BASE_URL}/api/merchant/${mid}`);
+      const r = http.get(`${BASE_URL}/api/merchant/${mid}`, { headers });
       assertOk(r, 'detail');
       sleep(0.5 + Math.random() * 1);
     }

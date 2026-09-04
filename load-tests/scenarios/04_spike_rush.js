@@ -46,8 +46,16 @@ export function setup() {
   // 登录 200 个测试用户
   const tokens = buildTokenPool(200);
 
+  if (tokens.length === 0) {
+    return { tokens, rushScheduleId: null };
+  }
+  const setupHeaders = { 'Content-Type': 'application/json', token: tokens[0] };
+
   // 查找一个可用的抢档期档期（bookType=1）
-  const searchRes = http.get(`${BASE_URL}/api/merchant/search?size=5`);
+  const searchRes = http.get(
+    `${BASE_URL}/api/merchant/search?size=5`,
+    { headers: setupHeaders }
+  );
   const merchants = searchRes.json('data.list') || [];
   let rushScheduleId = null;
 
@@ -56,7 +64,8 @@ export function setup() {
 
   for (const m of merchants) {
     const schRes = http.get(
-      `${BASE_URL}/api/schedule/month?merchantId=${m.id}&yearMonth=${yearMonth}`
+      `${BASE_URL}/api/schedule/month?merchantId=${m.id}&yearMonth=${yearMonth}`,
+      { headers: setupHeaders }
     );
     const schedules = schRes.json('data') || [];
     const rushSchedule = schedules.find((s) => s.bookType === 1);
