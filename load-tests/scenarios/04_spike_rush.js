@@ -51,9 +51,9 @@ export function setup() {
   }
   const setupHeaders = { 'Content-Type': 'application/json', token: tokens[0] };
 
-  // 查找一个可用的抢档期档期（bookType=1）
+  // 查找一个可用的抢档期档期（bookType=1，且状态可抢）
   const searchRes = http.get(
-    `${BASE_URL}/api/merchant/search?size=5`,
+    `${BASE_URL}/api/merchant/search?size=50`,
     { headers: setupHeaders }
   );
   const merchants = searchRes.json('data.records') || [];
@@ -68,9 +68,11 @@ export function setup() {
       { headers: setupHeaders }
     );
     const schedules = schRes.json('data') || [];
-    const rushSchedule = schedules.find((s) => s.bookType === 1);
+    // 优先找 bookType=1 且状态为可抢（status=0）的档期
+    const rushSchedule = schedules.find((s) => s.bookType === 1 && s.status === 0);
     if (rushSchedule) {
       rushScheduleId = rushSchedule.id;
+      console.info(`抢档期 ID: ${rushScheduleId}, 商家: ${m.id}, 日期: ${rushSchedule.date}`);
       break;
     }
   }
