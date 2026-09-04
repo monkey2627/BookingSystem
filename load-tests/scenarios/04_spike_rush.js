@@ -60,6 +60,7 @@ export function setup() {
   let rushScheduleId = null;
 
   const now = new Date();
+  const nowMs = now.getTime();
   const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   for (const m of merchants) {
@@ -68,11 +69,15 @@ export function setup() {
       { headers: setupHeaders }
     );
     const schedules = schRes.json('data') || [];
-    // 优先找 bookType=1 且状态为可抢（status=0）的档期
-    const rushSchedule = schedules.find((s) => s.bookType === 1 && s.status === 0);
+    // 找 bookType=1 且 rushOpenTime 已过（确保抢档期处于开放状态）
+    const rushSchedule = schedules.find((s) => {
+      if (s.bookType !== 1) return false;
+      if (!s.rushOpenTime) return false;
+      return new Date(s.rushOpenTime).getTime() <= nowMs;
+    });
     if (rushSchedule) {
       rushScheduleId = rushSchedule.id;
-      console.info(`抢档期 ID: ${rushScheduleId}, 商家: ${m.id}, 日期: ${rushSchedule.date}`);
+      console.info(`找到抢档期 ID=${rushScheduleId}, 商家=${m.id}, 日期=${rushSchedule.date}, 开放时间=${rushSchedule.rushOpenTime}`);
       break;
     }
   }

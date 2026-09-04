@@ -30,16 +30,16 @@ function login(phone) {
   return res.json('data.token');
 }
 
-function createSchedule(token, date, timeSlot, bookType) {
+function createSchedule(token, date, timeSlot, bookType, rushOpenTime = null) {
   return http.post(
     `${BASE_URL}/api/schedule`,
     JSON.stringify({
       date: date,
       timeSlot: timeSlot,
-      bookType: bookType,  // 0=普通预约, 1=抢档期
+      bookType: bookType,
       serviceType: 1,
-      maxQueueSize: 5,     // 抢档期最多 5 人排队
-      rushOpenTime: `${date}T10:00:00`,
+      maxQueueSize: 5,
+      rushOpenTime: rushOpenTime || `${date}T10:00:00`,
     }),
     { headers: { 'Content-Type': 'application/json', 'token': token } }
   );
@@ -49,6 +49,12 @@ function formatDate(offsetDays) {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
   return d.toISOString().slice(0, 10);
+}
+
+// 返回当前时间往前推 1 小时的 ISO 字符串（秒精度），保证抢档期在 spike 测试时已开放
+function pastHourIso() {
+  const d = new Date(Date.now() - 60 * 60 * 1000);
+  return d.toISOString().slice(0, 19);  // "2026-09-04T12:00:00"
 }
 
 export default function () {
@@ -63,12 +69,12 @@ export default function () {
     for (let dayOffset = 1; dayOffset <= 14; dayOffset++) {
       const date = formatDate(dayOffset);
 
-      // 普通预约档期（timeSlot 格式必须匹配 HH:mm-HH:mm）
+      // 普通预约档期
       const r1 = createSchedule(token, date, '10:00-12:00', 0);
       check(r1, { 'schedule created or exists': (r) => r.status === 200 });
 
-      // 抢档期（用于 spike 测试）
-      const r2 = createSchedule(token, date, '14:00-16:00', 1);
+      // 抢档期：rushOpenTime 设为 1 小时前，保证 spike 测试时已处于开放状态
+      const r2 = createSchedule(token, date, '14:00-16:00', 1, pastHourIso());
       check(r2, { 'rush schedule created or exists': (r) => r.status === 200 });
 
       sleep(0.02);
