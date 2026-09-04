@@ -20,56 +20,26 @@ echo "=========================================="
 
 # 1. 拉取最新代码
 echo ""
-echo "[1/7] 拉取最新代码..."
+echo "[1/5] 拉取最新代码..."
 cd "$PROJECT_DIR"
 git pull
 
 # 2. 构建后端
 echo ""
-echo "[2/7] 构建后端微服务..."
+echo "[2/5] 构建后端微服务..."
 cd "$BACKEND_DIR"
 mvn clean package -DskipTests -q
 
 # 3. 构建前端
 echo ""
-echo "[3/7] 构建前端..."
+echo "[3/5] 构建前端..."
 cd "$FRONTEND_DIR"
 npm install --silent
 npm run build
 
-# 4. 检查并启动 Nacos（微服务依赖）
+# 4. 停止旧服务 & 清理缓存
 echo ""
-echo "[4/7] 检查 Nacos 状态..."
-if docker ps --format {{.Names}} | grep -q ^mhp-nacos; then
-  echo "  Nacos 已在运行，跳过"
-else
-  echo "  Nacos 未运行，正在启动..."
-  docker start mhp-nacos
-  echo "  等待 Nacos 就绪..."
-  for i in $(seq 1 30); do
-    if curl -s -o /dev/null -w '%{http_code}' http://localhost:8848/nacos/v1/console/health/readiness 2>/dev/null | grep -q '200'; then
-      echo "  Nacos 已就绪"
-      break
-    fi
-    sleep 2
-  done
-fi
-# 5. 检查并启动 Redis（微服务依赖）
-echo ""
-echo "[5/7] 检查 Redis 状态..."
-if docker ps --format '{{.Names}}' | grep -q '^mhp-redis$'; then
-  echo "  Redis 已在运行，跳过"
-else
-  echo "  Redis 未运行，正在启动..."
-  docker start mhp-redis
-  echo "  等待 Redis 就绪..."
-  sleep 3
-  echo "  Redis 已就绪"
-fi
-
-# 6. 停止旧服务 & 清理缓存
-echo ""
-echo "[6/7] 停止旧服务 & 清理 Dubbo 缓存..."
+echo "[4/5] 停止旧服务 & 清理 Dubbo 缓存..."
 pkill -f "mhp-account-1.0.0.jar" 2>/dev/null || true
 pkill -f "mhp-booking-1.0.0.jar" 2>/dev/null || true
 pkill -f "mhp-social-1.0.0.jar" 2>/dev/null || true
@@ -78,9 +48,9 @@ rm -f ~/.dubbo/dubbo-registry-*.cache
 sleep 3
 echo "  旧服务已停止，缓存已清理"
 
-# 7. 按顺序启动服务
+# 5. 按顺序启动服务
 echo ""
-echo "[7/7] 启动服务..."
+echo "[5/5] 启动服务..."
 cd "$BACKEND_DIR"
 mkdir -p "$LOG_DIR"
 
@@ -112,7 +82,7 @@ echo "    PID: $!"
 # 等待 gateway 初始化
 sleep 10
 
-# 8. 验证
+# 6. 验证
 echo ""
 echo "=========================================="
 echo "  部署完成！服务状态："
