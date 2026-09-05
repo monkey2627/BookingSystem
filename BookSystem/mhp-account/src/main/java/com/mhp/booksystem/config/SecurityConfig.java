@@ -89,6 +89,7 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/user/login",    // 登录：未登录用户的入口，必须放行
                                 "/api/user/register", // 注册：同上
+                                "/api/user/refresh",  // 换发 accessToken：携带 refreshToken 调用，不需要 accessToken
                                 "/internal/**",       // 内部接口：微服务间直连调用，无 token
                                 "/swagger-ui/**",     // Swagger 静态资源目录
                                 "/swagger-ui.html",   // Swagger 入口 HTML

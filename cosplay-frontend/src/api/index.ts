@@ -8,10 +8,16 @@ import type {
 // ── 用户 ──────────────────────────────────────────────────
 export const userApi = {
   login: (data: { phone: string; password: string }) =>
-    request.post<any, { token: string; userInfo: UserInfo }>('/user/login', data),
+    request.post<any, { accessToken: string; refreshToken: string; userInfo: UserInfo }>('/user/login', data),
 
   register: (data: { phone: string; nickname: string; password: string }) =>
-    request.post<any, void>('/user/register', data),
+    request.post<any, { accessToken: string; refreshToken: string; userInfo: UserInfo }>('/user/register', data),
+
+  refreshToken: (refreshToken: string) =>
+    request.post<any, { accessToken: string; refreshToken: string; userInfo: UserInfo }>('/user/refresh', { refreshToken }),
+
+  logout: () =>
+    request.post<any, void>('/user/logout'),
 }
 
 // ── 商家 ──────────────────────────────────────────────────

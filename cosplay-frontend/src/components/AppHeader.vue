@@ -84,6 +84,7 @@ import { Bell, ArrowDown } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { ElMessageBox } from 'element-plus'
 import { unreadCount, useWebSocket } from '@/composables/useWebSocket'
+import { userApi } from '@/api'
 
 const { connect } = useWebSocket()
 
@@ -114,6 +115,7 @@ async function handleCommand(command: string) {
       cancelButtonText: '取消',
       type: 'warning'
     })
+    await userApi.logout().catch(() => {})  // 失败静默：本地凭证仍会清除
     userStore.logout()
     router.push('/login')
   } else if (command === 'messages') {

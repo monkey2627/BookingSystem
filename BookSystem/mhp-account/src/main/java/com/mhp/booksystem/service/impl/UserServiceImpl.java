@@ -1,14 +1,13 @@
 package com.mhp.booksystem.service.impl;
 
 import com.mhp.booksystem.security.JwtUtil;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mhp.booksystem.common.ResultCode;
 import com.mhp.booksystem.common.exception.BusinessException;
 import com.mhp.booksystem.dto.UserLoginDTO;
 import com.mhp.booksystem.dto.UserRegisterDTO;
-import com.mhp.booksystem.entity.Merchant;
 import com.mhp.booksystem.entity.User;
 import com.mhp.booksystem.mapper.MerchantMapper;
 import com.mhp.booksystem.mapper.UserMapper;
@@ -17,43 +16,25 @@ import com.mhp.booksystem.vo.UserLoginVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
 
     private final MerchantMapper merchantMapper;
+    private final StringRedisTemplate stringRedisTemplate;
 
     // BCryptPasswordEncoder 是线程安全的无状态对象，直接作为字段持有即可
     // 不用 @Autowired 注入，避免为此单独声明一个 @Bean
     private static final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
-    // ── @Override 说明 ────────────────────────────────────────────────────────
-    // @Override 的真正含义是"请编译器确认这个方法存在于父类或接口中，否则报错"。
-    // 它不只用于继承（extends），实现接口（implements）的方法同样应该加：
-    //   - 方法名拼错（registre 而非 register）→ 编译直接报错，不会等到运行时
-    //   - 接口方法签名变更后忘记同步实现    → 编译直接报错
-    // 没有 @Override 时以上错误在编译期不会被发现，只会在运行时才暴露。
-    // 结论：实现接口的方法都应该加 @Override，是防御性编程的好习惯。
+    private static final String RT_PREFIX = "rt:";
+    private static final long RT_TTL_DAYS = 7;
+
     @Override
     public UserLoginVO register(UserRegisterDTO dto) {
-        // 手机号唯一性校验，先查后插，并发概率极低（无需加锁）
-        //
-        // lambdaQuery() 来自父类 ServiceImpl，返回一个针对 User 表的 Lambda 条件构造器。
-        // 链式调用最终会翻译成 SQL 发给数据库，等价于：
-        //   SELECT COUNT(*) FROM user WHERE phone = ?
-        //
-        // .eq(User::getPhone, dto.getPhone())
-        //   eq = equal，添加一个 WHERE 等值条件。
-        //   第一个参数 User::getPhone 是方法引用，用来表示字段名：
-        //     - MyBatis-Plus 内部通过反射把 getPhone 解析为列名 "phone"
-        //     - 相比直接写字符串 .eq("phone", ...)，方法引用写法在字段名拼错时
-        //       编译直接报错，IDE 有提示，重构时也会自动跟着改
-        //   第二个参数 dto.getPhone() 是条件的值，对应 SQL 里的 ?
-        //
-        // .exists()
-        //   触发查询，执行 SELECT COUNT(*) > 0，返回 boolean：
-        //     true  → 表里已有这个手机号
-        //     false → 手机号未注册
         boolean exists = lambdaQuery()
                 .eq(User::getPhone, dto.getPhone())
                 .exists();
@@ -68,7 +49,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         user.setNickname(dto.getNickname());
         save(user);
 
-        // 注册即登录，省去用户再次输密码
         return buildLoginVO(user);
     }
 
@@ -90,22 +70,79 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     /**
-     * 登录/注册成功后统一构建返回值。
+     * 换发新 accessToken。
      *
-     * JwtUtil.generate(userId) 生成自包含的 JWT：Header.Payload.Signature 三段式字符串。
-     * Payload 里包含 userId（sub 字段）和过期时间（exp 字段），不需要查 Redis 就能验证。
-     * 前端把 token 存在 localStorage，后续请求通过 Axios 拦截器放入 Header "token"。
-     * 后端 JwtAuthenticationFilter 读取该 Header，解析出 userId 写入 SecurityContext，
-     * Service 层通过 SecurityUtil.getCurrentUserId() 取出，无 Redis IO，O(1)。
+     * refreshToken 格式：{userId}:{UUID32}，存于 Redis key rt:{userId}，TTL 7天。
+     * 验证流程：分割出 userId → 查 Redis 比对完整值 → 通过则签发新 accessToken。
+     * refreshToken 本身不变（不旋转），TTL 不续期，自然衰减至 7天后失效。
+     * 封号/改密码：del rt:{userId} 即可，下次 refresh 失败，旧 accessToken 最多再用 2小时。
      */
-    private UserLoginVO buildLoginVO(User user) {
+    @Override
+    public UserLoginVO refreshToken(String refreshToken) {
+        String[] parts = refreshToken.split(":", 2);
+        if (parts.length != 2) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED);
+        }
+        Long userId;
+        try {
+            userId = Long.parseLong(parts[0]);
+        } catch (NumberFormatException e) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED);
+        }
+
+        String stored = stringRedisTemplate.opsForValue().get(RT_PREFIX + userId);
+        if (!refreshToken.equals(stored)) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED);
+        }
+
+        User user = getById(userId);
+        if (user == null) {
+            throw new BusinessException(ResultCode.USER_NOT_FOUND);
+        }
+
+        // 只换发 accessToken，refreshToken 及其 TTL 不变
+        String newAccessToken = JwtUtil.generate(userId);
+
         UserLoginVO.UserInfoVO userInfoVO = new UserLoginVO.UserInfoVO();
         userInfoVO.setId(user.getId());
         userInfoVO.setNickname(user.getNickname());
         userInfoVO.setAvatar(user.getAvatar());
 
         UserLoginVO vo = new UserLoginVO();
-        vo.setToken(JwtUtil.generate(user.getId()));
+        vo.setAccessToken(newAccessToken);
+        vo.setRefreshToken(refreshToken);
+        vo.setUserInfo(userInfoVO);
+        return vo;
+    }
+
+    @Override
+    public void logout(Long userId) {
+        stringRedisTemplate.delete(RT_PREFIX + userId);
+    }
+
+    /**
+     * 登录/注册成功后统一构建双令牌返回值。
+     *
+     * accessToken：JWT（2小时），Header "token" 携带，JwtAuthenticationFilter 验签，无 Redis IO。
+     * refreshToken：{userId}:{UUID}，存 Redis rt:{userId}，TTL 7天；
+     *   accessToken 过期时前端凭此换新 accessToken，封号时删 Redis key 即可吊销。
+     */
+    private UserLoginVO buildLoginVO(User user) {
+        String accessToken = JwtUtil.generate(user.getId());
+        String uuid = UUID.randomUUID().toString().replace("-", "");
+        String refreshToken = user.getId() + ":" + uuid;
+
+        stringRedisTemplate.opsForValue().set(
+                RT_PREFIX + user.getId(), refreshToken, RT_TTL_DAYS, TimeUnit.DAYS);
+
+        UserLoginVO.UserInfoVO userInfoVO = new UserLoginVO.UserInfoVO();
+        userInfoVO.setId(user.getId());
+        userInfoVO.setNickname(user.getNickname());
+        userInfoVO.setAvatar(user.getAvatar());
+
+        UserLoginVO vo = new UserLoginVO();
+        vo.setAccessToken(accessToken);
+        vo.setRefreshToken(refreshToken);
         vo.setUserInfo(userInfoVO);
         return vo;
     }

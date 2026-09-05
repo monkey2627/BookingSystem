@@ -79,7 +79,7 @@ async function handleLogin() {
   loading.value = true
   try {
     const data = await userApi.login(loginForm.value)
-    userStore.setLoginInfo(data.token, data.userInfo)
+    userStore.setLoginInfo(data.accessToken, data.refreshToken, data.userInfo)
     ElMessage.success('登录成功')
     // 登录后跳回登录前想去的页面，没有则去首页
     const redirect = (route.query.redirect as string) || '/home'

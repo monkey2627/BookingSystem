@@ -12,7 +12,7 @@ public class JwtUtil {
     // 生产环境应从 Nacos 配置中心读取，此处硬编码供开发/演示使用
     private static final String SECRET = "mhp-cosplay-jwt-secret-key-32chars!";
     private static final SecretKey KEY = Keys.hmacShaKeyFor(SECRET.getBytes());
-    private static final long EXPIRE_MS = 7L * 24 * 3600 * 1000;
+    private static final long EXPIRE_MS = 2L * 3600 * 1000;
 
     public static String generate(Long userId) {
         return Jwts.builder()

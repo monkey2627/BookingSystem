@@ -5,7 +5,9 @@ import lombok.Data;
 @Data
 public class UserLoginVO {
 
-    private String token;
+    private String accessToken;
+
+    private String refreshToken;
 
     private UserInfoVO userInfo;
 

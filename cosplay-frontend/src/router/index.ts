@@ -112,11 +112,19 @@ const router = createRouter({
  */
 router.beforeEach((to, _from, next) => {
   const userStore = useUserStore()
+
+  // 已登录用户访问登录页，直接跳首页（避免已登录状态还看到登录表单）
+  if (to.name === 'login' && userStore.isLoggedIn) {
+    next({ path: '/home' })
+    return
+  }
+
   if (to.meta.requireAuth && !userStore.isLoggedIn) {
     // 带上 redirect，登录后 LoginView 可以拿到并跳回
     next({ path: '/login', query: { redirect: to.fullPath } })
     return
   }
+
   next()
 })
 
