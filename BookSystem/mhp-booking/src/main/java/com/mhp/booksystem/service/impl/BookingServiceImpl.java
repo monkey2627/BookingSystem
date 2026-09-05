@@ -3,6 +3,7 @@ package com.mhp.booksystem.service.impl;
 import com.mhp.booksystem.security.SecurityUtil;
 import cn.hutool.core.util.IdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.mhp.booksystem.common.ResultCode;
 import com.mhp.booksystem.common.exception.BusinessException;
@@ -50,16 +51,23 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
     private RpcMerchantService rpcMerchantService;
 
     /**
-     * 创建预约 — 核心业务，包含分布式锁防并发重复预约。
+     * 创建预约 — 双层并发保护。
      *
-     * 加锁原因：
-     *   若同一用户同时发起多个对同一档期的预约请求（网络抖动、重复点击），
-     *   没有锁时可能同时通过"重复检查"，创建出两条预约记录。
-     *   锁的粒度设为 userId+scheduleId，互不干扰。
+     * 层一（应用层）：Redisson 分布式锁，key = "schedule:book:{scheduleId}"
+     *   粒度为档期，同一档期的所有预约请求串行化。
+     *   既防不同用户并发争抢，也防同一用户重复点击/网络重传。
+     *   lock key 不含 userId：若含 userId，A、B 各持自己的锁互不阻塞，
+     *   都能通过 DCL 检查，会对同一档期创建两条预约。
      *
-     * 加锁后为什么要再查一次 schedule？
-     *   因为在拿到锁之前的那次查询是无锁的，状态可能在等锁期间被其他线程改变。
-     *   拿锁后重查是标准的 DCL（双重检查锁定）模式。
+     * 层二（数据库层）：CAS UPDATE — "UPDATE ... WHERE status=0" + 检查 affected rows
+     *   MySQL UPDATE 使用当前读（locking read），即使在 REPEATABLE READ 下
+     *   也读最新提交值，只有第一个到达的事务能将 status 从 0 改为 1，affected=1；
+     *   后续事务 affected=0，抛异常，@Transactional 回滚已写入的 booking 行。
+     *   Redis/Redisson 不可用时的最后防线。
+     *
+     * 加锁后为什么要再查一次 schedule（DCL）？
+     *   拿锁前的查询是无锁快照读，等锁期间状态可能已变。
+     *   拿锁后重查才能保证读到最新状态。
      */
     @Override
     @Transactional
@@ -74,7 +82,8 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
             throw new BusinessException(ResultCode.SCHEDULE_NOT_AVAILABLE.getCode(), "该档期为抢档期模式，请通过抢档期预约");
         }
 
-        String lockKey = "booking:create:" + userId + ":" + dto.getScheduleId();
+        // key 只含 scheduleId，同一档期所有用户的请求串行化，防不同用户并发争抢
+        String lockKey = "schedule:book:" + dto.getScheduleId();
         RLock lock = redissonClient.getLock(lockKey);
         boolean locked;
         try {
@@ -116,11 +125,15 @@ public class BookingServiceImpl extends ServiceImpl<BookingMapper, Booking> impl
             booking.setServiceType(schedule.getServiceType()); // 从档期冗余服务类型
             save(booking);
 
-            // 档期置为"已预约"，防止其他人再次预约同一档期
-            Schedule update = new Schedule();
-            update.setId(schedule.getId());
-            update.setStatus(1);
-            scheduleMapper.updateById(update);
+            // CAS 占用档期：WHERE status=0 确保原子性，affected=0 说明已被并发抢占
+            int affected = scheduleMapper.update(null,
+                    new LambdaUpdateWrapper<Schedule>()
+                            .eq(Schedule::getId, schedule.getId())
+                            .eq(Schedule::getStatus, 0)
+                            .set(Schedule::getStatus, 1));
+            if (affected == 0) {
+                throw new BusinessException(ResultCode.SCHEDULE_NOT_AVAILABLE);
+            }
 
         } finally {
             if (lock.isHeldByCurrentThread()) {

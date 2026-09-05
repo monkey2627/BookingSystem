@@ -5,11 +5,13 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.scheduling.annotation.EnableAsync;
 
 @SpringBootApplication
 @MapperScan("com.mhp.booksystem.mapper")
 @EnableFeignClients(basePackages = "com.mhp.booksystem.feign")
 @EnableDubbo(scanBasePackages = "com.mhp.booksystem")
+@EnableAsync
 public class SocialApplication {
 
     public static void main(String[] args) {
