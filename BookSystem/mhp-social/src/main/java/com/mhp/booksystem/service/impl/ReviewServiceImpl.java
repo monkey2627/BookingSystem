@@ -10,9 +10,9 @@ import com.mhp.booksystem.dto.ReviewCreateDTO;
 import com.mhp.booksystem.dto.ReviewReplyDTO;
 import com.mhp.booksystem.dto.feign.BookingDTO;
 import com.mhp.booksystem.dto.feign.MerchantDTO;
-import com.mhp.booksystem.dto.feign.MerchantScoreUpdateDTO;
 import com.mhp.booksystem.dto.feign.UserDTO;
 import com.mhp.booksystem.entity.Review;
+import com.mhp.booksystem.event.ReviewCreatedEvent;
 import com.mhp.booksystem.feign.AccountFeignClient;
 import com.mhp.booksystem.rpc.RpcBookingService;
 import com.mhp.booksystem.rpc.RpcMerchantService;
@@ -21,12 +21,11 @@ import com.mhp.booksystem.service.ReviewService;
 import com.mhp.booksystem.vo.ReviewVO;
 import lombok.RequiredArgsConstructor;
 import org.apache.dubbo.config.annotation.DubboReference;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +36,7 @@ import java.util.stream.Collectors;
 public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> implements ReviewService {
 
     private final AccountFeignClient accountFeignClient;
+    private final ApplicationEventPublisher eventPublisher;
 
     @DubboReference(version = "1.0.0")
     private RpcMerchantService rpcMerchantService;
@@ -73,7 +73,10 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         }
         save(review);
 
-        updateMerchantScore(booking.getMerchantId());
+        // 事务内发布事件；@TransactionalEventListener(AFTER_COMMIT) 保证
+        // 事务提交后才触发，Consumer 查 DB 时 review 已可见，均分计算正确。
+        // 若事务回滚，事件不触发，不会发出无效 MQ 消息。
+        eventPublisher.publishEvent(new ReviewCreatedEvent(booking.getMerchantId()));
     }
 
     @Override
@@ -121,18 +124,6 @@ public class ReviewServiceImpl extends ServiceImpl<ReviewMapper, Review> impleme
         update.setId(reviewId);
         update.setReply(dto.getReply());
         updateById(update);
-    }
-
-    private void updateMerchantScore(Long merchantId) {
-        List<Review> reviews = lambdaQuery().eq(Review::getMerchantId, merchantId).list();
-        int count = reviews.size();
-        double avg = reviews.stream().mapToInt(Review::getScore).average().orElse(0);
-        BigDecimal avgScore = BigDecimal.valueOf(avg).setScale(1, RoundingMode.HALF_UP);
-
-        MerchantScoreUpdateDTO scoreDTO = new MerchantScoreUpdateDTO();
-        scoreDTO.setAvgScore(avgScore);
-        scoreDTO.setReviewCount(count);
-        rpcMerchantService.updateMerchantScore(merchantId, scoreDTO);
     }
 
     private ReviewVO toVO(Review r, UserDTO user) {
