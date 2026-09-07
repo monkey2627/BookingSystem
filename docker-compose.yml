@@ -67,17 +67,45 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── RabbitMQ（含管理台） ───────────────────────────────────────
-  # 管理台：http://localhost:15672  admin/123456
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: mhp-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: "123456"
+  # ── RocketMQ ──────────────────────────────────────────────────
+  # NameServer：服务注册中心，Broker 启动时向它注册，Producer/Consumer 从它拉取路由
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.1.4
+    container_name: mhp-rocketmq-namesrv
+    command: sh mqnamesrv
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "9876:9876"
+    volumes:
+      - rocketmq-namesrv-data:/home/rocketmq/store
+
+  # Broker：实际存储消息、接收 Producer 投递、推送给 Consumer
+  # autoCreateTopicEnable=true：开发环境自动创建 Topic（mhp-notify-topic），无需手动建
+  rocketmq-broker:
+    image: apache/rocketmq:5.1.4
+    container_name: mhp-rocketmq-broker
+    command: sh mqbroker -n rocketmq-namesrv:9876 autoCreateTopicEnable=true
+    environment:
+      JAVA_OPT_EXT: -Xms256m -Xmx256m
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+      - "10912:10912"
+    volumes:
+      - rocketmq-broker-data:/home/rocketmq/store
+    depends_on:
+      - rocketmq-namesrv
+
+  # Dashboard：可视化管理台，查看 Topic、消费进度、死信消息等
+  # 控制台：http://localhost:8090
+  rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:latest
+    container_name: mhp-rocketmq-dashboard
+    environment:
+      JAVA_OPTS: -Drocketmq.namesrv.addr=rocketmq-namesrv:9876
+    ports:
+      - "8090:8080"
+    depends_on:
+      - rocketmq-namesrv
 
   # ── Nacos 2.3（单机模式，内置存储） ──────────────────────────────
   # 控制台：http://localhost:8848/nacos  nacos/nacos
@@ -244,3 +272,5 @@ volumes:
   nacos-data:
   es-data:
   influxdb-data:
+  rocketmq-namesrv-data:
+  rocketmq-broker-data:

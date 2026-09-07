@@ -4,52 +4,51 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mhp.booksystem.entity.Follow;
 import com.mhp.booksystem.mapper.FollowMapper;
 import com.mhp.booksystem.service.ReviewScoreService;
-import com.rabbitmq.client.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.core.Message;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
+import org.apache.rocketmq.spring.core.RocketMQListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
-import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-
-import static com.mhp.booksystem.config.RabbitConfig.NOTIFY_QUEUE;
 
 /**
  * 预约通知消费者 — 消费 mhp-booking 发来的通知，通过 WebSocket 推给目标用户。
  *
- * acknowledge-mode: manual（手动 ack）原因：
- *   自动 ack 会在消息出队瞬间就确认，若 WebSocket 推送失败，消息丢失。
- *   手动 ack 让我们在推送成功后才 basicAck，失败时 basicNack 让消息重回队列。
+ * RocketMQ 消费语义（对比 RabbitMQ 手动 ACK）：
+ *   - onMessage 正常返回 → 消费成功（等价于 basicAck）
+ *   - onMessage 抛出异常 → 消费失败，RocketMQ 按指数退避自动重试（默认 16 次）
+ *   - 超过 maxReconsumeTimes 后，消息自动进死信 Topic：%DLQ%mhp-social-notify-consumer
+ *   无需手动操作 Channel，框架自动管理重试和死信。
  *
- * 幂等性设计（消费者幂等）：
- *   RabbitMQ 在 basic.nack + requeue=false 后会把消息路由到死信队列。
- *   但网络抖动可能导致消息被投递两次（At-Least-Once 语义）。
- *   用 Redis SET NX "msg:processed:{msgId}" 记录已处理的消息 id，
- *   第二次消费时 setIfAbsent 返回 false，直接 ack 跳过，不重复推送。
+ * 幂等性设计（保持不变）：
+ *   RocketMQ 也是 At-Least-Once 语义，重试或故障恢复时同一消息可能再次投递。
+ *   用 Redis SET NX "msg:processed:{msgId}" 记录已处理 id，
+ *   第二次消费时 setIfAbsent 返回 false，直接 return（等价于 ack 跳过）。
  *
- * SCORE_UPDATE 消息处理：
- *   routing key "notify.score_update" 匹配 "notify.#"，进入本队列。
- *   不推 WebSocket，而是调 ReviewScoreService 重新聚合商家评分并更新 DB。
- *   这是评价提交后异步更新商家评分的消费端逻辑。
+ * SCORE_UPDATE 消息：
+ *   不推 WebSocket，调 ReviewScoreService 重新聚合商家评分并更新 DB。
  */
 @Slf4j
-@Component
+@Service
 @RequiredArgsConstructor
-public class NotifyConsumer {
+@RocketMQMessageListener(
+        topic = "mhp-notify-topic",
+        consumerGroup = "mhp-social-notify-consumer",
+        selectorExpression = "*"   // 消费所有 tag，在逻辑内按 type 分支
+)
+public class NotifyConsumer implements RocketMQListener<NotifyMessage> {
 
     private final StringRedisTemplate stringRedisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
     private final FollowMapper followMapper;
     private final ReviewScoreService reviewScoreService;
 
-    @RabbitListener(queues = NOTIFY_QUEUE)
-    public void onNotify(NotifyMessage msg, Message rawMsg, Channel channel) throws IOException {
-        long tag = rawMsg.getMessageProperties().getDeliveryTag();
+    @Override
+    public void onMessage(NotifyMessage msg) {
         String idempotentKey = "msg:processed:" + msg.getMsgId();
 
         // 幂等检查：SET NX + 24h 过期，24h 内同一 msgId 只处理一次
@@ -57,8 +56,7 @@ public class NotifyConsumer {
                 .setIfAbsent(idempotentKey, "1", 24, TimeUnit.HOURS);
         if (Boolean.FALSE.equals(isNew)) {
             log.warn("[MQ] 重复消息，跳过 msgId={}", msg.getMsgId());
-            channel.basicAck(tag, false);
-            return;
+            return;  // 正常返回 = 告知 RocketMQ 消费成功，不重试
         }
 
         try {
@@ -93,13 +91,12 @@ public class NotifyConsumer {
                 log.info("[MQ] 消息处理成功 msgId={} type={}", msg.getMsgId(), msg.getType());
             }
 
-            channel.basicAck(tag, false);
-
         } catch (Exception e) {
-            // 处理失败：删除幂等 key（允许下次重试），nack 不重入队（进死信队列）
+            // 处理失败：删除幂等 key（允许 RocketMQ 重试时重新处理）
             stringRedisTemplate.delete(idempotentKey);
             log.error("[MQ] 消息处理失败 msgId={} type={}", msg.getMsgId(), msg.getType(), e);
-            channel.basicNack(tag, false, false);
+            // 抛出异常通知 RocketMQ 本次消费失败，触发自动重试
+            throw e;
         }
     }
 }

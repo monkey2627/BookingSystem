@@ -1,10 +1,9 @@
 package com.mhp.booksystem.mq;
 
 import cn.hutool.core.util.IdUtil;
-import com.mhp.booksystem.config.RabbitConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Component;
 
 @Slf4j
@@ -12,7 +11,9 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class MQSender {
 
-    private final RabbitTemplate rabbitTemplate;
+    private static final String TOPIC = "mhp-notify-topic";
+
+    private final RocketMQTemplate rocketMQTemplate;
 
     public void sendBookingConfirmed(Long toUserId, Long bookingId) {
         send(toUserId, bookingId, "BOOKING_CONFIRMED", "您的预约已被商家确认，请按时赴约！");
@@ -32,9 +33,13 @@ public class MQSender {
     }
 
     private void send(Long toUserId, Long bookingId, String type, String content) {
-        NotifyMessage msg = new NotifyMessage(IdUtil.fastSimpleUUID(), type, toUserId, bookingId, content);
-        String routingKey = "notify." + type.toLowerCase();
-        rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE, routingKey, msg);
+        NotifyMessage msg = new NotifyMessage();
+        msg.setMsgId(IdUtil.fastSimpleUUID());
+        msg.setType(type);
+        msg.setToUserId(toUserId);
+        msg.setBookingId(bookingId);
+        msg.setContent(content);
+        rocketMQTemplate.syncSend(TOPIC + ":" + type, msg);
         log.info("[MQ] 发送通知 type={} toUser={} bookingId={}", type, toUserId, bookingId);
     }
 }

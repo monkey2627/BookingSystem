@@ -1,10 +1,9 @@
 package com.mhp.booksystem.mq;
 
 import cn.hutool.core.util.IdUtil;
-import com.mhp.booksystem.config.RabbitConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Component;
 
 /**
@@ -13,23 +12,29 @@ import org.springframework.stereotype.Component;
  * 消息流向：
  *   BookingServiceImpl/ReminderJobHandler
  *     → MQSender.send()
- *       → RabbitMQ Topic 交换机 "schedule.exchange"
- *         → routing key "notify.{type_lowercase}"  匹配  "notify.#"
- *           → notify.queue
- *             → mhp-social NotifyConsumer
- *               → WebSocket /user/queue/notify → 浏览器
+ *       → RocketMQ Topic "mhp-notify-topic"，Tag = 消息类型（如 BOOKING_CONFIRMED）
+ *         → mhp-social NotifyConsumer（consumerGroup=mhp-social-notify-consumer）
+ *           → WebSocket /user/queue/notify → 浏览器
  *
  * 为什么用 MQ 而不是直接 Feign 调 social 推 WebSocket？
  *   1. 解耦：booking 不依赖 social 服务是否在线，消息可以积压等 social 恢复。
- *   2. 可靠性：MQ 持久化，booking 发出后即使 social 宕机，重启后仍能消费。
+ *   2. 可靠性：syncSend 同步确认，发送失败立即抛异常，上层可感知并处理。
  *   3. 异步：booking 不需要等通知发送完成才返回响应给客人。
+ *
+ * 为什么换 RocketMQ（面试答：对比 RabbitMQ）：
+ *   1. 国内主流，阿里系生态，面试高频且与 Spring Cloud Alibaba 天然集成。
+ *   2. 内置延迟消息（18 个延迟级别），无需 TTL+死信的迂回实现。
+ *   3. 消费失败自动重试（默认 16 次指数退避），超次后自动进 %DLQ% 死信 Topic，比 RabbitMQ 手动配置简洁。
+ *   4. 消息轨迹（Message Trace）可通过 Dashboard 追踪每条消息的生产/消费全链路。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class MQSender {
 
-    private final RabbitTemplate rabbitTemplate;
+    private static final String TOPIC = "mhp-notify-topic";
+
+    private final RocketMQTemplate rocketMQTemplate;
 
     /** 商家确认预约后，通知客人 */
     public void sendBookingConfirmed(Long toUserId, Long bookingId) {
@@ -65,7 +70,8 @@ public class MQSender {
         msg.setScheduleId(scheduleId);
         msg.setScheduleDate(dateStr);
         msg.setContent(merchantNickname + " 发布了 " + dateStr + " 的抢档期，快去抢！");
-        rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE, "notify.rush_created", msg);
+        // destination 格式 "topic:tag"，tag 用于 selectorExpression 过滤
+        rocketMQTemplate.syncSend(TOPIC + ":RUSH_CREATED", msg);
         log.info("[MQ] 发送抢档通知 merchantId={} scheduleId={} date={}", merchantId, scheduleId, dateStr);
     }
 
@@ -78,7 +84,7 @@ public class MQSender {
         msg.setScheduleId(scheduleId);
         msg.setScheduleDate(dateStr);
         msg.setContent(merchantNickname + " 的 " + dateStr + " 抢档期将在 5 分钟后开放，快去主页准备抢！");
-        rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE, "notify.rush_reminder", msg);
+        rocketMQTemplate.syncSend(TOPIC + ":RUSH_REMINDER", msg);
         log.info("[MQ] 发送抢档倒计时提醒 merchantId={} scheduleId={} date={}", merchantId, scheduleId, dateStr);
     }
 
@@ -89,10 +95,8 @@ public class MQSender {
         msg.setToUserId(toUserId);
         msg.setBookingId(bookingId);
         msg.setContent(content);
-        // routing key 格式：notify.booking_confirmed / notify.booking_cancelled 等
-        // 交换机的绑定 key 是 "notify.#"，# 通配任意词，全部路由到 notify.queue
-        String routingKey = "notify." + type.toLowerCase();
-        rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE, routingKey, msg);
+        // destination 格式：topic:tag，tag = 消息类型，便于未来按 tag 做消费过滤
+        rocketMQTemplate.syncSend(TOPIC + ":" + type, msg);
         log.info("[MQ] 发送通知 type={} toUser={} bookingId={}", type, toUserId, bookingId);
     }
 }

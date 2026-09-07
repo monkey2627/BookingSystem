@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 开发命令
 
 ```bash
-# 中间件（MySQL 3306 / Redis 6379 / RabbitMQ 5672+15672 / Nacos 8848 / XXL-Job 8088 / ES 9200 / Kibana 5601 / Canal 11111）
+# 中间件（MySQL 3306 / Redis 6379 / RocketMQ 9876+10911+8090 / Nacos 8848 / XXL-Job 8088 / ES 9200 / Kibana 5601 / Canal 11111）
 # 首次运行需先构建含 IK 分词器的 ES 镜像（约 3~5 分钟）：
 docker compose build elasticsearch
 docker compose up -d
@@ -30,7 +30,7 @@ npm run dev    # 开发服务器
 npm run build  # 生产构建
 ```
 
-**验证端点：** RabbitMQ 管理台 `localhost:15672`（admin/123456）、XXL-Job `localhost:8080/xxl-job-admin`、Swagger `localhost:8080/swagger-ui.html`
+**验证端点：** RocketMQ Dashboard `localhost:8090`、XXL-Job `localhost:8080/xxl-job-admin`、Swagger `localhost:8080/swagger-ui.html`
 
 ---
 
@@ -57,7 +57,6 @@ npm run build  # 生产构建
 | JWT 认证过滤器 | `security/JwtAuthenticationFilter.java`（各微服务各自一份） |
 | JWT 工具类 | `mhp-common` 的 `security/JwtUtil.java` |
 | 取当前用户 ID | `mhp-common` 的 `security/SecurityUtil.getCurrentUserId()` |
-| RabbitMQ 配置 | `config/RabbitConfig.java` |
 | MQ 通知发送 / 消费 | `mq/MQSender.java`、`mq/NotifyConsumer.java`（消费后推 WebSocket） |
 | MQ 消息体 | `mq/NotifyMessage.java` |
 | 超时取消定时任务 | `job/BookingJobHandler.java`（XXL-Job 注册名：`cancelTimeoutBookingJob`） |
@@ -171,10 +170,13 @@ boolean locked = lock.tryLock(3, 30, TimeUnit.SECONDS);
 - `MessageServiceImpl` 保存消息后推送到 `/queue/messages`
 - 前端订阅：`/user/queue/messages`（聊天）、`/user/queue/notify`（系统通知）
 
-### RabbitMQ
+### RocketMQ
 
-- 交换机：`schedule.exchange`（Topic）；死信：`schedule.dead.exchange`（Direct）
-- 消费者幂等：`SET NX "msg:processed:{msgId}" 1 EX 86400`（Redis 去重）
+- Topic：`mhp-notify-topic`，Tag = 消息类型（`BOOKING_CONFIRMED`、`RUSH_CREATED` 等）
+- ConsumerGroup：`mhp-social-notify-consumer`（selectorExpression=`*`，代码内按 type 分支）
+- 发送：`rocketMQTemplate.syncSend("mhp-notify-topic:TAG", msg)`（同步确认，失败抛异常）
+- 消费失败：`throw exception` → 自动重试（默认 16 次指数退避）→ 超次进 `%DLQ%mhp-social-notify-consumer`
+- 消费者幂等：`SET NX "msg:processed:{msgId}" 1 EX 86400`（Redis 去重，逻辑不变）
 
 ### ResultCode 错误码分段
 
@@ -200,7 +202,7 @@ OpenFeign 调用方向（单向无环）：
 - mhp-social → mhp-account（获取用户/商家展示信息）
 - mhp-social → mhp-booking（Review/Complaint 校验预约状态）
 
-MQ 流向：mhp-booking（MQSender）→ RabbitMQ → mhp-social（NotifyConsumer → WebSocket push）
+MQ 流向：mhp-booking（MQSender）→ RocketMQ → mhp-social（NotifyConsumer → WebSocket push）
 
 内部接口（不经过 Gateway）：
 - mhp-account: `GET /internal/user/{id}`, `GET /internal/user/batch`, `GET /internal/merchant/{id}`, `GET /internal/merchant/by-user/{userId}`, `GET /internal/merchant/batch`, `PUT /internal/merchant/{id}/score`
@@ -503,7 +505,6 @@ SecurityContextHolder 自动清除（SecurityContextPersistenceFilter 的 finall
 - `config/MyMetaObjectHandler.java` — createTime/updateTime 自动填充
 - `websocket/StompAuthChannelInterceptor.java` — WS 握手时如何验 token、为什么在这里而不在 HTTP 拦截器
 - `config/WebSocketConfig.java` — STOMP 端点、消息代理、用户目的地前缀
-- `config/RabbitConfig.java` — 交换机/队列/死信队列绑定关系
 - `mhp-gateway/application.yml` — 路由规则（看完整个请求链路就通了）
 
 ---
@@ -528,7 +529,7 @@ SecurityContextHolder 自动清除（SecurityContextPersistenceFilter 的 finall
   → 搜索商家（MerchantMapper XML + JSON_CONTAINS）
   → 查看主页（getDetail 三缓防护 + Redisson）
   → 发起预约（BookingService + Redisson 分布式锁）
-  → 商家确认（状态流转 → MQSender → RabbitMQ）
+  → 商家确认（状态流转 → MQSender → RocketMQ）
   → WebSocket 推通知给客人（NotifyConsumer → SimpMessagingTemplate）
   → 客人评价（ReviewService + BookingFeign 跨服务校验 + 更新商家评分）
 ```

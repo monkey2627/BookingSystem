@@ -72,10 +72,11 @@
             <artifactId>jjwt-jackson</artifactId>
         </dependency>
 
-        <!-- RabbitMQ（发布预约事件） -->
+        <!-- RocketMQ（发布预约事件） -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-amqp</artifactId>
+            <groupId>org.apache.rocketmq</groupId>
+            <artifactId>rocketmq-spring-boot-starter</artifactId>
+            <version>2.3.0</version>
         </dependency>
 
         <!-- Sentinel 限流（抢档期接口） -->
