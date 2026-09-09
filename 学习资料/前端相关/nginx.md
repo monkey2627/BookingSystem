@@ -420,3 +420,7 @@ location /ws {    # 无尾部斜杠，直接匹配 /ws 路径
 ```bash
 sudo nginx -s reload   # 热重载，不中断现有连接
 ```
+
+
+## 日志
+access.log 会自动记录每一个到来的http请求
